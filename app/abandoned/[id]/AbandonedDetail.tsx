@@ -112,10 +112,10 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
       {/* Header */}
       <div className="sticky top-0 z-20 bg-background border-b border-border">
         <div className="flex items-center justify-between px-4 py-3">
-          <Link href="/records" className="flex items-center gap-1 text-muted-foreground">
+          <button onClick={() => router.back()} className="flex items-center gap-1 text-muted-foreground">
             <ArrowLeft size={15} />
             <span className="text-sm">记录</span>
-          </Link>
+          </button>
           <span className="font-semibold text-sm">放弃详情</span>
           <button onClick={() => setDeleteConfirm(true)} className="text-muted-foreground/50 p-1 -mr-1">
             <Trash2 size={14} />

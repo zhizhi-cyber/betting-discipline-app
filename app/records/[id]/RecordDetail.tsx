@@ -130,10 +130,10 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
       {/* Header */}
       <div className="sticky top-0 z-20 bg-background border-b border-border">
         <div className="flex items-center justify-between px-4 py-3">
-          <Link href="/records" className="flex items-center gap-1 text-muted-foreground">
+          <button onClick={() => router.back()} className="flex items-center gap-1 text-muted-foreground">
             <ArrowLeft size={15} />
             <span className="text-sm">记录</span>
-          </Link>
+          </button>
           <span className="font-semibold text-sm truncate max-w-[120px]">单场详情</span>
           <div className="flex items-center gap-2">
             {record.isDisciplineViolation && (

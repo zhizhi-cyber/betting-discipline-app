@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
 import BottomNav from "@/components/bottom-nav";
-import { saveBetRecord, saveAbandonedRecord, getSettings } from "@/lib/storage";
+import { saveBetRecord, saveAbandonedRecord, getSettings, DEFAULT_SETTINGS } from "@/lib/storage";
 import type { HandicapValue, ReverseOutcomeProbability } from "@/lib/types";
 import { gradeFromScore } from "@/lib/types";
 
@@ -82,23 +82,23 @@ const SCORING_ITEMS: {
   },
 ];
 
-const GRADE_MAP = {
-  abandon: { label: "建议放弃", amount: 0,     amtLabel: "",       textColor: "text-loss",    bg: "bg-loss" },
-  C:       { label: "C 级",   amount: 6000,  amtLabel: "¥6k",    textColor: "text-warning", bg: "bg-warning" },
-  B:       { label: "B 级",   amount: 8000,  amtLabel: "¥8k",    textColor: "text-[#6ea8d8]", bg: "bg-[#6ea8d8]" },
-  A:       { label: "A 级",   amount: 15000, amtLabel: "¥15k",   textColor: "text-[#b8a0e8]", bg: "bg-[#b8a0e8]" },
-  S:       { label: "S 级",   amount: 22000, amtLabel: "¥22k",   textColor: "text-[#f5c842]", bg: "bg-[#f5c842]" },
+const GRADE_DISPLAY = {
+  abandon: { label: "建议放弃", textColor: "text-loss",       bg: "bg-loss"        },
+  C:       { label: "C 级",    textColor: "text-warning",     bg: "bg-warning"     },
+  B:       { label: "B 级",    textColor: "text-[#6ea8d8]",   bg: "bg-[#6ea8d8]"  },
+  A:       { label: "A 级",    textColor: "text-[#b8a0e8]",   bg: "bg-[#b8a0e8]"  },
+  S:       { label: "S 级",    textColor: "text-[#f5c842]",   bg: "bg-[#f5c842]"  },
 };
 
-function calcGrade(scores: ScoreState, total: number) {
-  if (total <= 4) return GRADE_MAP.abandon;
-  if (total === 6) return GRADE_MAP.C;
-  if (total === 8) return GRADE_MAP.B;
+function calcGradeKey(scores: ScoreState, total: number): "abandon" | "C" | "B" | "A" | "S" {
+  if (total <= 4) return "abandon";
+  if (total === 6) return "C";
+  if (total === 8) return "B";
   if (total === 10) {
     const allPass = scores.bookie.score === 2 && scores.reliability.score === 2 && scores.trap.score === 2;
-    return allPass ? GRADE_MAP.S : GRADE_MAP.A;
+    return allPass ? "S" : "A";
   }
-  return GRADE_MAP.abandon;
+  return "abandon";
 }
 
 const emptyScore = (): ScoreItem => ({ score: null, selectedTags: [], note: "" });
@@ -132,11 +132,17 @@ export default function ReviewPage() {
   const [scores, setScores] = useState<ScoreState>(emptyScoreState());
   const [noteVisible, setNoteVisible] = useState<Partial<Record<ScoreKey, boolean>>>({});
 
+  const [odds, setOdds] = useState("0.85");
+  const [gradeAmounts, setGradeAmounts] = useState(DEFAULT_SETTINGS.gradeAmounts);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmAmount, setConfirmAmount] = useState("");
   const [confirmedOnce, setConfirmedOnce] = useState(false);
   const [abandonOpen, setAbandonOpen] = useState(false);
   const [abandonReason, setAbandonReason] = useState("");
+
+  useEffect(() => {
+    setGradeAmounts(getSettings().gradeAmounts);
+  }, []);
 
   const totalScore = useMemo(
     () => Object.values(scores).reduce((sum, item) => sum + (item.score ?? 0), 0),
@@ -160,7 +166,14 @@ export default function ReviewPage() {
       return `${item.title}未通过`;
     }).join("；");
   }, [scores, allScored, totalScore]);
-  const gradeInfo = useMemo(() => (allScored ? calcGrade(scores, totalScore) : null), [scores, totalScore, allScored]);
+  const gradeInfo = useMemo(() => {
+    if (!allScored) return null;
+    const key = calcGradeKey(scores, totalScore);
+    const display = GRADE_DISPLAY[key];
+    const amount = key === "abandon" ? 0 : gradeAmounts[key];
+    const amtLabel = amount > 0 ? `¥${(amount / 1000).toFixed(0)}k` : "";
+    return { ...display, amount, amtLabel, key };
+  }, [scores, totalScore, allScored, gradeAmounts]);
 
   const kickoffWarning = useMemo(() => {
     if (!kickoffTime) return false;
@@ -226,7 +239,7 @@ export default function ReviewPage() {
   const handleClear = () => {
     setLeague(""); setHomeTeam(""); setAwayTeam(""); setKickoffTime("");
     setHandicapSide(""); setHandicapValue(""); setBetType("pre");
-    setBettingDirection("");
+    setBettingDirection(""); setOdds("0.85");
     setDeduction(emptyDeduction());
     setScores(emptyScoreState());
     setNoteVisible({});
@@ -316,11 +329,11 @@ export default function ReviewPage() {
         type: betType,
         handicapSide: handicapSide || "home",
         handicapValue,
-        odds: 0.85,
+        odds: parseFloat(odds) || 0.85,
         amount,
         betTime: new Date().toISOString(),
       }],
-      isDisciplineViolation: false,
+      isDisciplineViolation: isOverSuggested,
       completionStatus: "pristine",
       createdAt: new Date().toISOString(),
     });
@@ -408,6 +421,21 @@ export default function ReviewPage() {
                 {dir === "home" ? `投主队${homeTeam ? "（" + homeTeam + "）" : ""}` : `投客队${awayTeam ? "（" + awayTeam + "）" : ""}`}
               </button>
             ))}
+          </div>
+
+          {/* Odds */}
+          <div className="flex gap-1.5 items-center">
+            <span className="text-[11px] text-muted-foreground shrink-0">港盘水位</span>
+            <input
+              type="number"
+              step="0.01"
+              min="0.5"
+              max="1.5"
+              className="w-24 px-2.5 py-1.5 bg-muted rounded-md text-xs font-mono outline-none focus:ring-1 focus:ring-foreground/20"
+              value={odds}
+              onChange={(e) => setOdds(e.target.value)}
+            />
+            <span className="text-[10px] text-muted-foreground/50">（港盘，如 0.85 / 0.9）</span>
           </div>
 
           {/* Time + type */}
@@ -644,12 +672,12 @@ export default function ReviewPage() {
         {allScored && gradeInfo && (
           <section className={`border rounded-md overflow-hidden ${
             isHardStopped ? "border-loss/30" : totalScore < 6 ? "border-warning/30" :
-            gradeInfo === GRADE_MAP.S ? "border-[#f5c842]/30" : "border-border"
+            gradeInfo?.key === "S" ? "border-[#f5c842]/30" : "border-border"
           }`}>
             {/* Grade header */}
             <div className={`px-4 py-3 flex items-end justify-between ${
               isHardStopped ? "bg-loss/10" : totalScore < 6 ? "bg-warning/10" :
-              gradeInfo === GRADE_MAP.S ? "bg-[#f5c842]/5" : "bg-card"
+              gradeInfo?.key === "S" ? "bg-[#f5c842]/5" : "bg-card"
             }`}>
               <div>
                 <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">审查裁决</p>
@@ -669,7 +697,7 @@ export default function ReviewPage() {
 
             {/* Status bar */}
             <div className={`px-4 py-3 font-bold text-sm text-center ${gradeInfo.bg} ${
-              gradeInfo === GRADE_MAP.S || gradeInfo === GRADE_MAP.A ? "text-background" : "text-white"
+              gradeInfo.key === "S" || gradeInfo.key === "A" ? "text-background" : "text-white"
             }`}>
               {isHardStopped ? "庄家立场复核未通过 · 禁止下注"
               : totalScore < 6 ? "总分不达标 · 建议放弃本场"
@@ -677,7 +705,7 @@ export default function ReviewPage() {
             </div>
 
             {/* S grade special note */}
-            {gradeInfo === GRADE_MAP.S && (
+            {gradeInfo.key === "S" && (
               <div className="px-4 py-2 border-t border-[#f5c842]/20 bg-[#f5c842]/5">
                 <p className="text-[11px] text-[#f5c842]/80">S 级：全5项通过 · 核心三项（可靠性/诱盘/庄家）均无异议</p>
               </div>

@@ -519,13 +519,19 @@ function MonthListView({
 
 function RecordsInner() {
   const searchParams = useSearchParams();
+  const router = useRouter();
   const betId = searchParams.get("id");
   const abanId = searchParams.get("aid");
+
+  // viewMode lives in the URL so it survives detail navigation + back
+  const viewMode = searchParams.get("view") === "year" ? "year" : "month";
+  const setViewMode = (v: "month" | "year") => {
+    router.replace(v === "year" ? "/records?view=year" : "/records");
+  };
 
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
-  const [viewMode, setViewMode] = useState<"month" | "year">("month");
   const [allBetRecords, setAllBetRecords] = useState<BetRecord[]>([]);
   const [allAbandonedRecords, setAllAbandonedRecords] = useState<AbandonedRecord[]>([]);
 
@@ -544,7 +550,7 @@ function RecordsInner() {
         setYear={setYear}
         allBetRecords={allBetRecords}
         allAbandonedRecords={allAbandonedRecords}
-        onMonthClick={(m) => { setMonth(m); setViewMode("month"); }}
+        onMonthClick={(m) => { setMonth(m); router.replace("/records"); }}
       />
     );
   }
