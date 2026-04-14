@@ -8,6 +8,10 @@ import { mockAbandonedRecords, type ReviewConclusion } from "@/lib/mock-data";
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
 
+export function generateStaticParams() {
+  return mockAbandonedRecords.map((r) => ({ id: r.id }));
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const SCORE_LABELS: Record<string, string> = {

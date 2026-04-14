@@ -8,6 +8,10 @@ import { mockDetailedRecords, calcPnl, getTotalBetAmount, type Outcome } from "@
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
 
+export function generateStaticParams() {
+  return mockDetailedRecords.map((r) => ({ id: r.id }));
+}
+
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const GRADE_COLORS: Record<string, string> = {
