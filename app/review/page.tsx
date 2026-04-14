@@ -275,7 +275,7 @@ export default function ReviewPage() {
       completionStatus: "pristine",
       createdAt: new Date().toISOString(),
     });
-    router.push(`/abandoned/${id}`);
+    router.push("/records");
   };
 
   const handleSaveBet = () => {
@@ -324,7 +324,7 @@ export default function ReviewPage() {
       completionStatus: "pristine",
       createdAt: new Date().toISOString(),
     });
-    router.push(`/records/${id}`);
+    router.push("/records");
   };
 
   const handleOpenConfirm = () => {
