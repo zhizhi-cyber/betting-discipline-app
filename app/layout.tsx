@@ -6,6 +6,12 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "纪律盘",
   description: "足球亚盘让球纪律审查工具",
+  manifest: "/betting-discipline-app/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "纪律盘",
+  },
 };
 
 const geistSans = Geist({

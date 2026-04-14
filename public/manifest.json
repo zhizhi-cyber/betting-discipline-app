@@ -1,0 +1,19 @@
+{
+  "name": "纪律盘",
+  "short_name": "纪律盘",
+  "description": "足球亚盘投注纪律追踪",
+  "start_url": "/betting-discipline-app/",
+  "scope": "/betting-discipline-app/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    {
+      "src": "/betting-discipline-app/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
