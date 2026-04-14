@@ -2,7 +2,8 @@ import { mockAbandonedRecords } from "@/lib/mock-data";
 import AbandonedDetail from "./AbandonedDetail";
 
 export function generateStaticParams() {
-  return mockAbandonedRecords.map((r) => ({ id: r.id }));
+  const ids = mockAbandonedRecords.map((r) => ({ id: r.id }));
+  return ids.length > 0 ? ids : [{ id: "_" }];
 }
 
 export default function Page() {
