@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
-import { mockDetailedRecords, calcPnl, getTotalBetAmount, type Outcome } from "@/lib/mock-data";
+import { useParams, useRouter } from "next/navigation";
+import { ArrowLeft, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
+import { calcPnl, getTotalBetAmount, type Outcome, type BetRecord } from "@/lib/mock-data";
+import { getBetRecords, saveBetRecord, deleteBetRecord } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
 
@@ -56,8 +57,15 @@ function fmtDateTime(iso: string) {
 
 export default function RecordDetail() {
   const params = useParams();
+  const router = useRouter();
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
-  const record = mockDetailedRecords.find((r) => r.id === id);
+  const [record, setRecord] = useState<BetRecord | undefined>(undefined);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+
+  useEffect(() => {
+    const found = getBetRecords().find((r) => r.id === id);
+    setRecord(found);
+  }, [id]);
 
   const { show: showToast, node: toastNode } = useToast();
 
@@ -75,11 +83,18 @@ export default function RecordDetail() {
 
   const [scoresExpanded, setScoresExpanded] = useState(false);
   const [deductionExpanded, setDeductionExpanded] = useState(false);
-  const [selectedOutcome, setSelectedOutcome] = useState<Outcome | null>(record?.result?.outcome ?? null);
-  const [checkedErrors, setCheckedErrors] = useState<string[]>(
-    record?.result?.errors?.length ? record.result.errors : autoErrors
-  );
-  const [reviewNote, setReviewNote] = useState(record?.result?.reviewNote ?? "");
+  const [selectedOutcome, setSelectedOutcome] = useState<Outcome | null>(null);
+  const [checkedErrors, setCheckedErrors] = useState<string[]>([]);
+  const [reviewNote, setReviewNote] = useState("");
+
+  // Sync state when record loads
+  useEffect(() => {
+    if (record) {
+      setSelectedOutcome(record.result?.outcome ?? null);
+      setCheckedErrors(record.result?.errors?.length ? record.result.errors : autoErrors);
+      setReviewNote(record.result?.reviewNote ?? "");
+    }
+  }, [record, autoErrors]);
 
   const totalPnl = useMemo(() => {
     if (!selectedOutcome || !record) return null;
@@ -119,15 +134,35 @@ export default function RecordDetail() {
             <ArrowLeft size={15} />
             <span className="text-sm">记录</span>
           </Link>
-          <span className="font-semibold text-sm truncate max-w-[160px]">单场详情</span>
+          <span className="font-semibold text-sm truncate max-w-[120px]">单场详情</span>
           <div className="flex items-center gap-2">
             {record.isDisciplineViolation && (
               <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning/15 text-warning font-bold">违纪</span>
             )}
             <span className={`text-xs font-black ${GRADE_COLORS[record.grade]}`}>{record.grade}级</span>
+            <button onClick={() => setDeleteConfirm(true)} className="text-muted-foreground/50 p-1 -mr-1">
+              <Trash2 size={14} />
+            </button>
           </div>
         </div>
       </div>
+
+      {/* Delete confirm */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-50 bg-background/80 flex items-end">
+          <div className="w-full bg-card border-t border-border px-4 py-5 space-y-3">
+            <p className="text-sm font-bold">确认删除这条记录？</p>
+            <p className="text-xs text-muted-foreground">删除后无法恢复</p>
+            <button onClick={() => { deleteBetRecord(record.id); router.push("/records"); }}
+              className="w-full py-3 rounded font-bold text-sm bg-loss text-white">
+              确认删除
+            </button>
+            <button onClick={() => setDeleteConfirm(false)} className="w-full py-2 text-xs text-muted-foreground">
+              取消
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="px-4 py-4 space-y-5">
 
@@ -372,7 +407,17 @@ export default function RecordDetail() {
               onChange={(e) => setReviewNote(e.target.value)}
             />
             <button
-              onClick={() => showToast("复盘已保存", "success")}
+              onClick={() => {
+                if (!record || !selectedOutcome) return;
+                const updated: BetRecord = {
+                  ...record,
+                  result: { outcome: selectedOutcome, errors: checkedErrors, reviewNote },
+                  completionStatus: reviewNote || checkedErrors.length > 0 ? "complete" : "pending_improve",
+                };
+                saveBetRecord(updated);
+                setRecord(updated);
+                showToast("复盘已保存", "success");
+              }}
               className="w-full mt-2 py-3 rounded font-bold text-sm bg-foreground text-background active:opacity-80 transition-opacity"
             >
               保存复盘

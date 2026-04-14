@@ -1,11 +1,9 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, ArrowLeft } from "lucide-react";
 import {
-  mockDetailedRecords,
-  mockAbandonedRecords,
   getTotalPnl,
   getTotalBetAmount,
   type Outcome,
@@ -15,6 +13,7 @@ import {
   type UnifiedRecord,
   calcPnl,
 } from "@/lib/mock-data";
+import { getBetRecords, getAbandonedRecords } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -102,11 +101,18 @@ function calcMonthStats(bets: BetRecord[]) {
 export default function RecordsPage() {
   const [year, setYear] = useState(() => new Date().getFullYear());
   const [month, setMonth] = useState(() => new Date().getMonth() + 1);
+  const [allBetRecords, setAllBetRecords] = useState<BetRecord[]>([]);
+  const [allAbandonedRecords, setAllAbandonedRecords] = useState<AbandonedRecord[]>([]);
+
+  useEffect(() => {
+    setAllBetRecords(getBetRecords());
+    setAllAbandonedRecords(getAbandonedRecords());
+  }, []);
 
   const allUnified: UnifiedRecord[] = useMemo(() => [
-    ...mockDetailedRecords,
-    ...mockAbandonedRecords,
-  ], []);
+    ...allBetRecords,
+    ...allAbandonedRecords,
+  ], [allBetRecords, allAbandonedRecords]);
 
   const monthItems = useMemo(() => filterByMonth(allUnified, year, month), [allUnified, year, month]);
   const monthBets = useMemo(() => monthItems.filter((r): r is BetRecord => r.type === "bet"), [monthItems]);

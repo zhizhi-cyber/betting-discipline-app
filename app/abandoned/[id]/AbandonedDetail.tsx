@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
-import { mockAbandonedRecords, type ReviewConclusion } from "@/lib/mock-data";
+import { useParams, useRouter } from "next/navigation";
+import { ArrowLeft, ChevronDown, ChevronUp, Trash2 } from "lucide-react";
+import { type ReviewConclusion, type AbandonedRecord } from "@/lib/mock-data";
+import { getAbandonedRecords, saveAbandonedRecord, deleteAbandonedRecord } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
 
@@ -63,16 +64,31 @@ function fmtDateTime(iso: string) {
 
 export default function AbandonedDetail() {
   const params = useParams();
+  const router = useRouter();
   const id = Array.isArray(params.id) ? params.id[0] : params.id;
-  const record = mockAbandonedRecords.find((r) => r.id === id);
+  const [record, setRecord] = useState<AbandonedRecord | undefined>(undefined);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+
+  useEffect(() => {
+    const found = getAbandonedRecords().find((r) => r.id === id);
+    setRecord(found);
+  }, [id]);
 
   const { show: showToast, node: toastNode } = useToast();
 
   const [scoresExpanded, setScoresExpanded] = useState(true);
   const [deductionExpanded, setDeductionExpanded] = useState(false);
-  const [actualResult, setActualResult] = useState(record?.actualResult ?? "");
-  const [conclusion, setConclusion] = useState<ReviewConclusion | "">(record?.reviewConclusion ?? "");
-  const [reviewNote, setReviewNote] = useState(record?.reviewNote ?? "");
+  const [actualResult, setActualResult] = useState("");
+  const [conclusion, setConclusion] = useState<ReviewConclusion | "">("");
+  const [reviewNote, setReviewNote] = useState("");
+
+  useEffect(() => {
+    if (record) {
+      setActualResult(record.actualResult ?? "");
+      setConclusion(record.reviewConclusion ?? "");
+      setReviewNote(record.reviewNote ?? "");
+    }
+  }, [record]);
 
   if (!record) {
     return (
@@ -101,9 +117,28 @@ export default function AbandonedDetail() {
             <span className="text-sm">记录</span>
           </Link>
           <span className="font-semibold text-sm">放弃详情</span>
-          <span className="text-[10px] text-muted-foreground">已放弃</span>
+          <button onClick={() => setDeleteConfirm(true)} className="text-muted-foreground/50 p-1 -mr-1">
+            <Trash2 size={14} />
+          </button>
         </div>
       </div>
+
+      {/* Delete confirm */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-50 bg-background/80 flex items-end">
+          <div className="w-full bg-card border-t border-border px-4 py-5 space-y-3">
+            <p className="text-sm font-bold">确认删除这条记录？</p>
+            <p className="text-xs text-muted-foreground">删除后无法恢复</p>
+            <button onClick={() => { deleteAbandonedRecord(record.id); router.push("/records"); }}
+              className="w-full py-3 rounded font-bold text-sm bg-loss text-white">
+              确认删除
+            </button>
+            <button onClick={() => setDeleteConfirm(false)} className="w-full py-2 text-xs text-muted-foreground">
+              取消
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="px-4 py-4 space-y-5">
 
@@ -277,7 +312,19 @@ export default function AbandonedDetail() {
 
           <button
             disabled={!conclusion}
-            onClick={() => conclusion && showToast("回看结论已保存", "success")}
+            onClick={() => {
+              if (!conclusion || !record) return;
+              const updated: AbandonedRecord = {
+                ...record,
+                actualResult: (actualResult || undefined) as AbandonedRecord["actualResult"],
+                reviewConclusion: conclusion,
+                reviewNote,
+                completionStatus: "complete",
+              };
+              saveAbandonedRecord(updated);
+              setRecord(updated);
+              showToast("回看结论已保存", "success");
+            }}
             className={`w-full mt-3 py-3 rounded font-bold text-sm transition-opacity ${
               conclusion ? "bg-foreground text-background active:opacity-80" : "bg-muted text-muted-foreground cursor-not-allowed opacity-40"
             }`}

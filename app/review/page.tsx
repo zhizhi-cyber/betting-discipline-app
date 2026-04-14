@@ -2,9 +2,12 @@
 
 import { useState, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
 import BottomNav from "@/components/bottom-nav";
+import { saveBetRecord, saveAbandonedRecord, getSettings } from "@/lib/storage";
 import type { HandicapValue, ReverseOutcomeProbability } from "@/lib/types";
+import { gradeFromScore } from "@/lib/types";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -112,9 +115,11 @@ const emptyDeduction = (): DeductionState => ({
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function ReviewPage() {
-  const [matchName, setMatchName] = useState("");
+  const router = useRouter();
+  const [league, setLeague] = useState("");
   const [homeTeam, setHomeTeam] = useState("");
   const [awayTeam, setAwayTeam] = useState("");
+  const matchName = [league, homeTeam && awayTeam ? `${homeTeam} vs ${awayTeam}` : ""].filter(Boolean).join(" ");
   const [kickoffTime, setKickoffTime] = useState("");
   const [handicapSide, setHandicapSide] = useState<"home" | "away" | "">("");
   const [handicapValue, setHandicapValue] = useState("");
@@ -219,7 +224,7 @@ export default function ReviewPage() {
   });
 
   const handleClear = () => {
-    setMatchName(""); setHomeTeam(""); setAwayTeam(""); setKickoffTime("");
+    setLeague(""); setHomeTeam(""); setAwayTeam(""); setKickoffTime("");
     setHandicapSide(""); setHandicapValue(""); setBetType("pre");
     setBettingDirection("");
     setDeduction(emptyDeduction());
@@ -233,6 +238,93 @@ export default function ReviewPage() {
   const handleOpenAbandon = () => {
     setAbandonReason(autoAbandonReason);
     setAbandonOpen(true);
+  };
+
+  const handleSaveAbandoned = () => {
+    const id = `a-${Date.now()}`;
+    const settings = getSettings();
+    const allPass = scores.bookie.score === 2 && scores.reliability.score === 2 && scores.trap.score === 2;
+    const grade = gradeFromScore(totalScore, allPass);
+    saveAbandonedRecord({
+      id,
+      type: "abandoned",
+      match: matchName || "未命名比赛",
+      homeTeam,
+      awayTeam,
+      kickoffTime: kickoffTime || new Date().toISOString(),
+      bettingDirection: bettingDirection || "home",
+      handicapSide: handicapSide || "home",
+      handicapValue,
+      totalScore,
+      abandonReason,
+      scores: {
+        fundamental: { score: scores.fundamental.score ?? 0, tags: scores.fundamental.selectedTags, note: scores.fundamental.note },
+        odds:        { score: scores.odds.score ?? 0,        tags: scores.odds.selectedTags,        note: scores.odds.note },
+        reliability: { score: scores.reliability.score ?? 0, tags: scores.reliability.selectedTags, note: scores.reliability.note },
+        trap:        { score: scores.trap.score ?? 0,        tags: scores.trap.selectedTags,        note: scores.trap.note },
+        bookie:      { score: scores.bookie.score ?? 0,      tags: scores.bookie.selectedTags,      note: scores.bookie.note },
+      },
+      deduction: {
+        fairRanges: deduction.fairRanges,
+        homeWinBookieExpected: deduction.homeWinExpected,
+        awayWinBookieExpected: deduction.awayWinExpected,
+        reverseProbability: deduction.reverseProbability,
+        suspectedTrap: deduction.suspectedTrap,
+        doubts: deduction.doubts,
+      },
+      completionStatus: "pristine",
+      createdAt: new Date().toISOString(),
+    });
+    router.push(`/abandoned/${id}`);
+  };
+
+  const handleSaveBet = () => {
+    const id = `b-${Date.now()}`;
+    const settings = getSettings();
+    const allPass = scores.bookie.score === 2 && scores.reliability.score === 2 && scores.trap.score === 2;
+    const grade = gradeFromScore(totalScore, allPass);
+    const amount = parseInt(confirmAmount.replace(/[^0-9]/g, ""), 10) || settings.gradeAmounts[grade];
+    saveBetRecord({
+      id,
+      type: "bet",
+      match: matchName || "未命名比赛",
+      homeTeam,
+      awayTeam,
+      kickoffTime: kickoffTime || new Date().toISOString(),
+      bettingDirection: bettingDirection || "home",
+      handicapSide: handicapSide || "home",
+      handicapValue,
+      grade,
+      totalScore,
+      scores: {
+        fundamental: { score: scores.fundamental.score ?? 0, tags: scores.fundamental.selectedTags, note: scores.fundamental.note },
+        odds:        { score: scores.odds.score ?? 0,        tags: scores.odds.selectedTags,        note: scores.odds.note },
+        reliability: { score: scores.reliability.score ?? 0, tags: scores.reliability.selectedTags, note: scores.reliability.note },
+        trap:        { score: scores.trap.score ?? 0,        tags: scores.trap.selectedTags,        note: scores.trap.note },
+        bookie:      { score: scores.bookie.score ?? 0,      tags: scores.bookie.selectedTags,      note: scores.bookie.note },
+      },
+      deduction: {
+        fairRanges: deduction.fairRanges,
+        homeWinBookieExpected: deduction.homeWinExpected,
+        awayWinBookieExpected: deduction.awayWinExpected,
+        reverseProbability: deduction.reverseProbability,
+        suspectedTrap: deduction.suspectedTrap,
+        doubts: deduction.doubts,
+      },
+      bets: [{
+        id: `bs-${Date.now()}`,
+        type: betType,
+        handicapSide: handicapSide || "home",
+        handicapValue,
+        odds: 0.85,
+        amount,
+        betTime: new Date().toISOString(),
+      }],
+      isDisciplineViolation: false,
+      completionStatus: "pristine",
+      createdAt: new Date().toISOString(),
+    });
+    router.push(`/records/${id}`);
   };
 
   const handleOpenConfirm = () => {
@@ -261,27 +353,27 @@ export default function ReviewPage() {
         {/* ── 1. Match Info + Betting Direction ─────────────────── */}
         <section className="space-y-2">
           <Label>比赛基础信息</Label>
-          <input
-            className="w-full px-3 py-2 bg-muted rounded-md text-sm outline-none focus:ring-1 focus:ring-foreground/20 placeholder:text-muted-foreground/40"
-            placeholder="比赛名称，例：英超 曼城 vs 阿森纳"
-            value={matchName}
-            onChange={(e) => setMatchName(e.target.value)}
-          />
           <div className="grid grid-cols-[1fr_auto_1fr] gap-1.5 items-center">
             <input
-              className="w-full px-3 py-1.5 bg-muted rounded-md text-xs outline-none placeholder:text-muted-foreground/40"
+              className="w-full px-3 py-2 bg-muted rounded-md text-sm outline-none focus:ring-1 focus:ring-foreground/20 placeholder:text-muted-foreground/40"
               placeholder="主队"
               value={homeTeam}
               onChange={(e) => setHomeTeam(e.target.value)}
             />
-            <span className="text-[11px] text-muted-foreground text-center">vs</span>
+            <span className="text-[11px] text-muted-foreground text-center font-bold">vs</span>
             <input
-              className="w-full px-3 py-1.5 bg-muted rounded-md text-xs outline-none placeholder:text-muted-foreground/40"
+              className="w-full px-3 py-2 bg-muted rounded-md text-sm outline-none focus:ring-1 focus:ring-foreground/20 placeholder:text-muted-foreground/40"
               placeholder="客队"
               value={awayTeam}
               onChange={(e) => setAwayTeam(e.target.value)}
             />
           </div>
+          <input
+            className="w-full px-3 py-1.5 bg-muted rounded-md text-xs outline-none placeholder:text-muted-foreground/40"
+            placeholder="联赛（可选，例：英超）"
+            value={league}
+            onChange={(e) => setLeague(e.target.value)}
+          />
 
           {/* Handicap row */}
           <div className="flex gap-1.5 items-center flex-wrap">
@@ -642,7 +734,7 @@ export default function ReviewPage() {
                       我确认超额下注
                     </button>
                   ) : (
-                    <button className="w-full py-3 rounded font-bold text-sm bg-foreground text-background active:opacity-80">
+                    <button onClick={handleSaveBet} className="w-full py-3 rounded font-bold text-sm bg-foreground text-background active:opacity-80">
                       确认保存下注记录
                     </button>
                   )}
@@ -667,7 +759,7 @@ export default function ReviewPage() {
                     value={abandonReason}
                     onChange={(e) => setAbandonReason(e.target.value)}
                   />
-                  <button className="w-full py-3 rounded font-bold text-sm bg-foreground text-background active:opacity-80">
+                  <button onClick={handleSaveAbandoned} className="w-full py-3 rounded font-bold text-sm bg-foreground text-background active:opacity-80">
                     确认保存到放弃池
                   </button>
                   <button onClick={() => setAbandonOpen(false)} className="w-full py-2 text-xs text-muted-foreground">
@@ -693,7 +785,7 @@ export default function ReviewPage() {
                     value={abandonReason}
                     onChange={(e) => setAbandonReason(e.target.value)}
                   />
-                  <button className="w-full py-3 rounded font-bold text-sm bg-foreground text-background active:opacity-80">
+                  <button onClick={handleSaveAbandoned} className="w-full py-3 rounded font-bold text-sm bg-foreground text-background active:opacity-80">
                     确认保存到放弃池
                   </button>
                   <button onClick={() => setAbandonOpen(false)} className="w-full py-2 text-xs text-muted-foreground">
