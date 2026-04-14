@@ -62,10 +62,10 @@ function fmtDateTime(iso: string) {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function AbandonedDetail() {
+export default function AbandonedDetail({ id: propId }: { id?: string }) {
   const params = useParams();
   const router = useRouter();
-  const id = Array.isArray(params.id) ? params.id[0] : params.id;
+  const id = propId ?? (Array.isArray(params.id) ? params.id[0] : params.id);
   const [record, setRecord] = useState<AbandonedRecord | undefined>(undefined);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
 
