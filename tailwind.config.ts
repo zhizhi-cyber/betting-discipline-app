@@ -44,13 +44,11 @@ export default {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
-        chart: {
-          "1": "hsl(var(--chart-1))",
-          "2": "hsl(var(--chart-2))",
-          "3": "hsl(var(--chart-3))",
-          "4": "hsl(var(--chart-4))",
-          "5": "hsl(var(--chart-5))",
-        },
+        // Functional colors — profit/loss follow Chinese market convention (red=up/profit, green=down/loss)
+        profit:  "#e03535",   // red  — profit / pass / can-bet
+        loss:    "#2a9d5c",   // green — loss / fail / forbidden
+        warning: "#d97706",   // amber — caution / semi-hard threshold
+        neutral: "#555555",   // grey  — push / neutral
       },
       borderRadius: {
         lg: "var(--radius)",
