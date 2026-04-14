@@ -201,12 +201,14 @@ function YearView({
   allBetRecords,
   allAbandonedRecords,
   onMonthClick,
+  setViewMode,
 }: {
   year: number;
   setYear: (y: number) => void;
   allBetRecords: BetRecord[];
   allAbandonedRecords: AbandonedRecord[];
   onMonthClick: (month: number) => void;
+  setViewMode: (v: "month" | "year") => void;
 }) {
   const now = new Date();
   const currentYear = now.getFullYear();
@@ -240,6 +242,13 @@ function YearView({
         <div className="flex items-center gap-3 px-4 py-3">
           <Link href="/" className="text-muted-foreground"><ArrowLeft size={16} /></Link>
           <span className="font-semibold text-sm flex-1">记录</span>
+          <button
+            onClick={() => setViewMode("month")}
+            className="text-muted-foreground p-1"
+            title="切换月视图"
+          >
+            <LayoutList size={16} />
+          </button>
         </div>
 
         {/* Year nav */}
@@ -551,6 +560,7 @@ function RecordsInner() {
         allBetRecords={allBetRecords}
         allAbandonedRecords={allAbandonedRecords}
         onMonthClick={(m) => { setMonth(m); router.replace("/records"); }}
+        setViewMode={setViewMode}
       />
     );
   }

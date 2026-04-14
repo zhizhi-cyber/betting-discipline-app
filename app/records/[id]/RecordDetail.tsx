@@ -409,10 +409,14 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
             <button
               onClick={() => {
                 if (!record || !selectedOutcome) return;
+                const isCleanWin =
+                  (selectedOutcome === "win" || selectedOutcome === "half_win" || selectedOutcome === "push") &&
+                  autoErrors.length === 0;
+                const hasReflection = reviewNote.trim().length > 0 || checkedErrors.length > 0;
                 const updated: BetRecord = {
                   ...record,
                   result: { outcome: selectedOutcome, errors: checkedErrors, reviewNote },
-                  completionStatus: reviewNote || checkedErrors.length > 0 ? "complete" : "pending_improve",
+                  completionStatus: isCleanWin || hasReflection ? "complete" : "pending_improve",
                 };
                 saveBetRecord(updated);
                 setRecord(updated);
