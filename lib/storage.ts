@@ -159,17 +159,11 @@ export function saveSettings(settings: AppSettings): void {
 
 // ─── Stats helpers ────────────────────────────────────────────────────────────
 
-export function calcMonthStats(year: number, month: number) {
-  const bets = getBetRecords().filter((r) => {
-    const d = new Date(r.kickoffTime);
-    return d.getFullYear() === year && d.getMonth() + 1 === month;
-  });
-
+function calcBetListStats(bets: import("./types").BetRecord[]) {
   let totalBet = 0;
   let totalPnl = 0;
   let settled = 0;
   let pendingReviewCount = 0;
-
   for (const r of bets) {
     const amt = r.bets.reduce((s, b) => s + b.amount, 0);
     totalBet += amt;
@@ -180,8 +174,23 @@ export function calcMonthStats(year: number, month: number) {
     }
     if (r.completionStatus === "pending_review") pendingReviewCount++;
   }
-
   const roi = totalBet > 0 ? (totalPnl / totalBet) * 100 : 0;
-
   return { totalBet, totalPnl, roi, settled, total: bets.length, pendingReviewCount };
+}
+
+export function calcMonthStats(year: number, month: number) {
+  const bets = getBetRecords().filter((r) => {
+    const d = new Date(r.kickoffTime);
+    return d.getFullYear() === year && d.getMonth() + 1 === month;
+  });
+  return calcBetListStats(bets);
+}
+
+export function calcYearStats(year: number) {
+  const bets = getBetRecords().filter((r) => new Date(r.kickoffTime).getFullYear() === year);
+  return calcBetListStats(bets);
+}
+
+export function calcAllTimeStats() {
+  return calcBetListStats(getBetRecords());
 }

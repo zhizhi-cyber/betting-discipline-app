@@ -142,7 +142,7 @@ export interface GradeAmounts {
 }
 
 export interface DisplayPrefs {
-  defaultTimeRange: "month" | "week" | "all";
+  defaultTimeRange: "month" | "year" | "all";
 }
 
 export interface AppSettings {

@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
-import { DEFAULT_SETTINGS, type AppSettings } from "@/lib/storage";
+import { DEFAULT_SETTINGS, getSettings, saveSettings, type AppSettings } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
 
@@ -12,6 +12,10 @@ import { useToast } from "@/components/toast";
 export default function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const { show: showToast, node: toastNode } = useToast();
+
+  useEffect(() => {
+    setSettings(getSettings());
+  }, []);
 
   const update = <K extends keyof AppSettings>(section: K) =>
     (field: keyof AppSettings[K], value: number | string) => {
@@ -22,7 +26,7 @@ export default function SettingsPage() {
     };
 
   const handleSave = () => {
-    // Would call saveSettings(settings) with localStorage
+    saveSettings(settings);
     showToast("设置已保存", "success");
   };
 
@@ -127,7 +131,7 @@ export default function SettingsPage() {
             <div className="px-4 py-3 bg-card">
               <p className="text-xs font-medium mb-2">首页默认时间范围</p>
               <div className="flex gap-1.5">
-                {(["month", "week", "all"] as const).map((opt) => (
+                {(["month", "year", "all"] as const).map((opt) => (
                   <button
                     key={opt}
                     onClick={() => update("displayPrefs")("defaultTimeRange", opt)}
@@ -137,7 +141,7 @@ export default function SettingsPage() {
                         : "bg-muted text-muted-foreground"
                     }`}
                   >
-                    {opt === "month" ? "本月" : opt === "week" ? "本周" : "全部"}
+                    {opt === "month" ? "本月" : opt === "year" ? "本年" : "全部历史"}
                   </button>
                 ))}
               </div>

@@ -2,9 +2,10 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Plus, Settings } from "lucide-react";
 import { getTotalPnl, getTotalBetAmount, type Outcome, type ReviewConclusion, type BetRecord, type AbandonedRecord } from "@/lib/mock-data";
-import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, syncPendingReview } from "@/lib/storage";
+import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, calcYearStats, calcAllTimeStats, syncPendingReview } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -12,15 +13,6 @@ import BottomNav from "@/components/bottom-nav";
 function fmtDate(iso: string) {
   const d = new Date(iso);
   return d.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric", weekday: "short" });
-}
-
-function getMonthRange() {
-  if (typeof window === "undefined") return "";
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = now.getMonth() + 1;
-  const lastDay = new Date(y, m, 0).getDate();
-  return `${y}年${m}月1日 – ${m}月${lastDay}日`;
 }
 
 const OUTCOME_LABELS: Record<Outcome, string> = {
@@ -43,31 +35,47 @@ const GRADE_COLORS: Record<string, string> = {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
-  const [monthRange, setMonthRange] = useState("");
+  const router = useRouter();
+  const [rangeLabel, setRangeLabel] = useState("");
   const [recentBets, setRecentBets] = useState<BetRecord[]>([]);
   const [recentAbandoned, setRecentAbandoned] = useState<AbandonedRecord[]>([]);
   const [stats, setStats] = useState({ totalPnl: 0, totalBet: 0, roi: 0, count: 0, pendingReviewCount: 0 });
   const [weeklyTarget, setWeeklyTarget] = useState(5000);
   const [monthlyTarget, setMonthlyTarget] = useState(20000);
+  const [timeRange, setTimeRange] = useState<"month" | "year" | "all">("month");
 
   useEffect(() => {
     syncPendingReview();
-    setMonthRange(getMonthRange());
 
     const settings = getSettings();
+    const range = settings.displayPrefs.defaultTimeRange;
+    setTimeRange(range);
     setWeeklyTarget(settings.goals.weeklyTarget);
     setMonthlyTarget(settings.goals.monthlyTarget);
 
     const now = new Date();
     const y = now.getFullYear();
     const m = now.getMonth() + 1;
-    const monthStats = calcMonthStats(y, m);
+
+    let s;
+    if (range === "month") {
+      s = calcMonthStats(y, m);
+      const lastDay = new Date(y, m, 0).getDate();
+      setRangeLabel(`${y}年${m}月1日 – ${m}月${lastDay}日`);
+    } else if (range === "year") {
+      s = calcYearStats(y);
+      setRangeLabel(`${y}年度`);
+    } else {
+      s = calcAllTimeStats();
+      setRangeLabel("全部历史");
+    }
+
     setStats({
-      totalPnl: monthStats.totalPnl,
-      totalBet: monthStats.totalBet,
-      roi: Math.round(monthStats.roi * 10) / 10,
-      count: monthStats.total,
-      pendingReviewCount: monthStats.pendingReviewCount,
+      totalPnl: s.totalPnl,
+      totalBet: s.totalBet,
+      roi: Math.round(s.roi * 10) / 10,
+      count: s.total,
+      pendingReviewCount: s.pendingReviewCount,
     });
 
     const bets = getBetRecords().sort(
@@ -80,6 +88,8 @@ export default function HomePage() {
     );
     setRecentAbandoned(abandoned.slice(0, 2));
   }, []);
+
+  const rangeStatLabel = timeRange === "month" ? "本月" : timeRange === "year" ? "本年" : "历史";
 
   const monthProgress = Math.min(Math.max(Math.round((stats.totalPnl / monthlyTarget) * 100), 0), 100);
   const monthGap = monthlyTarget - stats.totalPnl;
@@ -110,22 +120,22 @@ export default function HomePage() {
         </Link>
       </div>
 
-      {/* ── Hero: Current Month PnL ─────────────────────────────── */}
+      {/* ── Hero: PnL ───────────────────────────────────────────── */}
       <div className="px-4 pt-2 pb-5 border-b border-border">
-        <p className="text-[10px] text-muted-foreground/60 mb-1">{monthRange}</p>
+        <p className="text-[10px] text-muted-foreground/60 mb-1">{rangeLabel}</p>
         <div className={`text-5xl font-black font-mono leading-none tracking-tight ${stats.totalPnl >= 0 ? "text-profit" : "text-loss"}`}>
           {stats.totalPnl >= 0 ? "+" : ""}{stats.totalPnl.toLocaleString()}
         </div>
         <div className="flex items-center gap-3 mt-2.5">
-          <StatTriple label="本月投注" value={stats.totalBet > 0 ? `¥${(stats.totalBet / 1000).toFixed(0)}k` : "—"} />
+          <StatTriple label={`${rangeStatLabel}投注`} value={stats.totalBet > 0 ? `¥${(stats.totalBet / 1000).toFixed(0)}k` : "—"} />
           <span className="text-border">|</span>
           <StatTriple
-            label="本月ROI"
+            label={`${rangeStatLabel}ROI`}
             value={stats.totalBet > 0 ? `${stats.roi >= 0 ? "+" : ""}${stats.roi}%` : "—"}
             valueClass={stats.roi >= 0 ? "text-profit" : "text-loss"}
           />
           <span className="text-border">|</span>
-          <StatTriple label="本月场次" value={`${stats.count}场`} />
+          <StatTriple label={`${rangeStatLabel}场次`} value={`${stats.count}场`} />
         </div>
       </div>
 
@@ -175,7 +185,7 @@ export default function HomePage() {
             <Link href="/records" className="flex-1 py-2.5 text-center text-xs font-medium text-muted-foreground border border-border rounded-lg">
               全部记录
             </Link>
-            <Link href="/records?tab=abandoned" className="flex-1 py-2.5 text-center text-xs font-medium text-muted-foreground border border-border rounded-lg">
+            <Link href="/records" className="flex-1 py-2.5 text-center text-xs font-medium text-muted-foreground border border-border rounded-lg">
               放弃池
             </Link>
           </div>
@@ -196,7 +206,7 @@ export default function HomePage() {
                 const outcome = r.result?.outcome;
                 const betAmt = getTotalBetAmount(r);
                 return (
-                  <Link key={r.id} href={`/records/${r.id}`}>
+                  <button key={r.id} onClick={() => router.push(`/records?id=${r.id}`)} className="w-full text-left">
                     <div className="flex items-center gap-3 py-3 first:pt-0 active:opacity-60 transition-opacity">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
@@ -228,7 +238,7 @@ export default function HomePage() {
                         )}
                       </div>
                     </div>
-                  </Link>
+                  </button>
                 );
               })}
             </div>
@@ -239,14 +249,14 @@ export default function HomePage() {
         <div className="border-t border-border pt-4 pb-6">
           <div className="flex items-center justify-between mb-3">
             <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">最近放弃</p>
-            <Link href="/records?tab=abandoned" className="text-[10px] text-muted-foreground underline underline-offset-2">全部</Link>
+            <Link href="/records" className="text-[10px] text-muted-foreground underline underline-offset-2">全部</Link>
           </div>
           {recentAbandoned.length === 0 ? (
             <p className="text-xs text-muted-foreground/50 py-3">暂无放弃记录</p>
           ) : (
             <div className="space-y-0 divide-y divide-border">
               {recentAbandoned.map((a) => (
-                <Link key={a.id} href={`/abandoned/${a.id}`}>
+                <button key={a.id} onClick={() => router.push(`/records?aid=${a.id}`)} className="w-full text-left">
                   <div className="flex items-center gap-3 py-3 first:pt-0 active:opacity-60 transition-opacity">
                     <div className="flex-1 min-w-0">
                       <p className="text-xs font-semibold truncate opacity-60">{a.match}</p>
@@ -269,7 +279,7 @@ export default function HomePage() {
                       )}
                     </div>
                   </div>
-                </Link>
+                </button>
               ))}
             </div>
           )}
