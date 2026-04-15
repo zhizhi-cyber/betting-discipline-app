@@ -5,7 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, Settings } from "lucide-react";
 import { getTotalPnl, getTotalBetAmount, type Outcome, type ReviewConclusion, type BetRecord, type AbandonedRecord } from "@/lib/mock-data";
-import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, calcYearStats, calcAllTimeStats, syncPendingReview } from "@/lib/storage";
+import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, calcYearStats, calcWeekStats, calcAllTimeStats, syncPendingReview, countToday } from "@/lib/storage";
+import { weekStart, weekEnd } from "@/lib/types";
 import BottomNav from "@/components/bottom-nav";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -25,7 +26,7 @@ const OUTCOME_PNL_COLOR: Record<Outcome, string> = {
 };
 
 const CONCLUSION_LABELS: Record<ReviewConclusion, string> = {
-  abandon_correct: "放弃得对", abandon_wrong: "放弃错了", no_regret: "仍不后悔",
+  abandon_correct: "观察得对", abandon_wrong: "观察错了", no_regret: "仍不后悔",
 };
 
 const GRADE_COLORS: Record<string, string> = {
@@ -42,7 +43,9 @@ export default function HomePage() {
   const [stats, setStats] = useState({ totalPnl: 0, totalBet: 0, roi: 0, count: 0, pendingReviewCount: 0 });
   const [weeklyTarget, setWeeklyTarget] = useState(5000);
   const [monthlyTarget, setMonthlyTarget] = useState(20000);
-  const [timeRange, setTimeRange] = useState<"month" | "year" | "all">("month");
+  const [timeRange, setTimeRange] = useState<"week" | "month" | "year" | "all">("month");
+  const [todayCount, setTodayCount] = useState({ bets: 0, watches: 0 });
+  const [dailyLimits, setDailyLimits] = useState({ bets: 3, watches: 3 });
 
   useEffect(() => {
     syncPendingReview();
@@ -52,13 +55,24 @@ export default function HomePage() {
     setTimeRange(range);
     setWeeklyTarget(settings.goals.weeklyTarget);
     setMonthlyTarget(settings.goals.monthlyTarget);
+    setDailyLimits({
+      bets: settings.riskControls.maxDailyMatches,
+      watches: settings.riskControls.maxDailyWatches,
+    });
+    setTodayCount(countToday());
 
     const now = new Date();
     const y = now.getFullYear();
     const m = now.getMonth() + 1;
 
     let s;
-    if (range === "month") {
+    if (range === "week") {
+      s = calcWeekStats(now);
+      const ws = weekStart(now);
+      const we = weekEnd(now);
+      const fmt = (d: Date) => `${d.getMonth() + 1}月${d.getDate()}日`;
+      setRangeLabel(`本周 ${fmt(ws)} – ${fmt(we)}`);
+    } else if (range === "month") {
       s = calcMonthStats(y, m);
       const lastDay = new Date(y, m, 0).getDate();
       setRangeLabel(`${y}年${m}月1日 – ${m}月${lastDay}日`);
@@ -89,7 +103,9 @@ export default function HomePage() {
     setRecentAbandoned(abandoned.slice(0, 2));
   }, []);
 
-  const rangeStatLabel = timeRange === "month" ? "本月" : timeRange === "year" ? "本年" : "历史";
+  const rangeStatLabel = timeRange === "week" ? "本周" : timeRange === "month" ? "本月" : timeRange === "year" ? "本年" : "历史";
+  const overBet = todayCount.bets >= dailyLimits.bets;
+  const overWatch = todayCount.watches >= dailyLimits.watches;
 
   const monthProgress = Math.min(Math.max(Math.round((stats.totalPnl / monthlyTarget) * 100), 0), 100);
   const monthGap = monthlyTarget - stats.totalPnl;
@@ -186,8 +202,23 @@ export default function HomePage() {
               全部记录
             </Link>
             <Link href="/records" className="flex-1 py-2.5 text-center text-xs font-medium text-muted-foreground border border-border rounded-lg">
-              放弃池
+              观察池
             </Link>
+          </div>
+          <div className="flex items-center gap-3 pt-1 text-[11px] text-muted-foreground">
+            <span>
+              今日下注
+              <span className={`font-mono mx-1 ${overBet ? "text-loss" : "text-foreground"}`}>
+                {todayCount.bets}/{dailyLimits.bets}
+              </span>
+            </span>
+            <span className="opacity-30">·</span>
+            <span>
+              今日观察
+              <span className={`font-mono mx-1 ${overWatch ? "text-loss" : "text-foreground"}`}>
+                {todayCount.watches}/{dailyLimits.watches}
+              </span>
+            </span>
           </div>
         </div>
 
@@ -248,11 +279,11 @@ export default function HomePage() {
         {/* ── Recent Abandoned ─────────────────────────────────────── */}
         <div className="border-t border-border pt-4 pb-6">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">最近放弃</p>
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">最近观察</p>
             <Link href="/records" className="text-[10px] text-muted-foreground underline underline-offset-2">全部</Link>
           </div>
           {recentAbandoned.length === 0 ? (
-            <p className="text-xs text-muted-foreground/50 py-3">暂无放弃记录</p>
+            <p className="text-xs text-muted-foreground/50 py-3">暂无观察记录</p>
           ) : (
             <div className="space-y-0 divide-y divide-border">
               {recentAbandoned.map((a) => (

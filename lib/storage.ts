@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   riskControls: {
     maxDailyMatches:    3,
+    maxDailyWatches:    3,
     dailyLossLimit:     15000,
     monthlyMaxDrawdown: 50000,
   },
@@ -193,4 +194,49 @@ export function calcYearStats(year: number) {
 
 export function calcAllTimeStats() {
   return calcBetListStats(getBetRecords());
+}
+
+// ─── Week stats ───────────────────────────────────────────────────────────────
+// Week starts Monday. weekStartDate is ISO yyyy-mm-dd of that Monday.
+
+import { weekStart } from "./types";
+
+export function calcWeekStats(weekStartDate: Date) {
+  const start = weekStart(weekStartDate);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 7);
+  const bets = getBetRecords().filter((r) => {
+    const d = new Date(r.kickoffTime);
+    return d >= start && d < end;
+  });
+  return calcBetListStats(bets);
+}
+
+// ─── Daily counters ───────────────────────────────────────────────────────────
+
+export function countToday(): { bets: number; watches: number } {
+  const today = new Date();
+  const sameDay = (iso: string) => {
+    const d = new Date(iso);
+    return d.getFullYear() === today.getFullYear() &&
+           d.getMonth()    === today.getMonth() &&
+           d.getDate()     === today.getDate();
+  };
+  const bets = getBetRecords().filter((r) => sameDay(r.kickoffTime)).length;
+  const watches = getAbandonedRecords().filter((r) => sameDay(r.kickoffTime)).length;
+  return { bets, watches };
+}
+
+// ─── Promote watch → bet ──────────────────────────────────────────────────────
+
+export function promoteWatchToBet(watchId: string, newBet: BetRecord): void {
+  const all = getAbandonedRecords();
+  const w = all.find((r) => r.id === watchId);
+  if (w) {
+    const updated = all.map((r) =>
+      r.id === watchId ? { ...r, promotedToBetId: newBet.id } : r
+    );
+    save(KEYS.ABANDONED_RECORDS, updated);
+  }
+  saveBetRecord({ ...newBet, convertedFromWatchId: watchId });
 }

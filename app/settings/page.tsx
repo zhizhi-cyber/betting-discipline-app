@@ -78,10 +78,19 @@ export default function SettingsPage() {
           <SectionLabel>风控设置</SectionLabel>
           <div className="border border-border rounded-md overflow-hidden divide-y divide-border">
             <SettingRow
-              label="单日最多场次"
+              label="每日下注上限"
               value={settings.riskControls.maxDailyMatches}
               suffix="场"
+              desc="纪律要求：1-3 场；观察池不占用此额度"
               onChange={(v) => update("riskControls")("maxDailyMatches", v)}
+              isInteger
+            />
+            <SettingRow
+              label="每日观察上限"
+              value={settings.riskControls.maxDailyWatches}
+              suffix="场"
+              desc="观察池独立上限，避免过度关注"
+              onChange={(v) => update("riskControls")("maxDailyWatches", v)}
               isInteger
             />
             <SettingRow
@@ -131,7 +140,7 @@ export default function SettingsPage() {
             <div className="px-4 py-3 bg-card">
               <p className="text-xs font-medium mb-2">首页默认时间范围</p>
               <div className="flex gap-1.5">
-                {(["month", "year", "all"] as const).map((opt) => (
+                {(["week", "month", "year", "all"] as const).map((opt) => (
                   <button
                     key={opt}
                     onClick={() => update("displayPrefs")("defaultTimeRange", opt)}
@@ -141,7 +150,7 @@ export default function SettingsPage() {
                         : "bg-muted text-muted-foreground"
                     }`}
                   >
-                    {opt === "month" ? "本月" : opt === "year" ? "本年" : "全部历史"}
+                    {opt === "week" ? "本周" : opt === "month" ? "本月" : opt === "year" ? "本年" : "全部"}
                   </button>
                 ))}
               </div>
