@@ -1,10 +1,13 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useMemo, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronUp, Star } from "lucide-react";
 import BottomNav from "@/components/bottom-nav";
-import { saveBetRecord, saveAbandonedRecord, getSettings, countToday } from "@/lib/storage";
+import {
+  saveBetRecord, saveAbandonedRecord, getSettings, countToday,
+  getBetRecords, getAbandonedRecords,
+} from "@/lib/storage";
 import type {
   HandicapValue,
   HandicapConfidence,
@@ -15,6 +18,8 @@ import type {
   BettingDirection,
   SubdimChoice,
   SidedHandicap,
+  BetRecord,
+  AbandonedRecord,
 } from "@/lib/types";
 import {
   SUBDIMS,
@@ -119,8 +124,14 @@ function SidedHandicapPicker({
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-export default function ReviewPage() {
+function ReviewInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const editBetId   = searchParams.get("edit");
+  const editWatchId = searchParams.get("editWatch");
+  const isEditingBet   = !!editBetId;
+  const isEditingWatch = !!editWatchId;
+  const isEditing      = isEditingBet || isEditingWatch;
 
   // Match info
   const [matchName, setMatchName]   = useState("");
@@ -165,6 +176,48 @@ export default function ReviewPage() {
   // Today's counters
   const [todayCount, setTodayCount] = useState({ bets: 0, watches: 0 });
   useEffect(() => { setTodayCount(countToday()); }, []);
+
+  // Edit-mode: original record (for preserving id/createdAt/result) + original amount
+  const [editOriginalBet,   setEditOriginalBet]   = useState<BetRecord | null>(null);
+  const [editOriginalWatch, setEditOriginalWatch] = useState<AbandonedRecord | null>(null);
+  const [editAmountWarningShown, setEditAmountWarningShown] = useState(false);
+
+  // Load record when entering edit mode
+  useEffect(() => {
+    if (isEditingBet) {
+      const r = getBetRecords().find((x) => x.id === editBetId);
+      if (!r) return;
+      setEditOriginalBet(r);
+      setMatchName(r.match);
+      setHomeTeam(r.homeTeam);
+      setAwayTeam(r.awayTeam);
+      // datetime-local wants "YYYY-MM-DDTHH:mm" — slice ISO accordingly
+      setKickoffTime(r.kickoffTime.slice(0, 16));
+      setHandicapSide(r.handicapSide);
+      setHandicapValue(r.handicapValue as HandicapValue);
+      setBettingDirection(r.bettingDirection);
+      setOdds(String(r.bets[0]?.odds ?? "0.97"));
+      setBetType(r.bets[0]?.type ?? "pre");
+      setDeduction(r.deduction);
+      setScores(r.scores);
+      setManualS(!!r.manualS);
+    } else if (isEditingWatch) {
+      const r = getAbandonedRecords().find((x) => x.id === editWatchId);
+      if (!r) return;
+      setEditOriginalWatch(r);
+      setMatchName(r.match);
+      setHomeTeam(r.homeTeam);
+      setAwayTeam(r.awayTeam);
+      setKickoffTime(r.kickoffTime.slice(0, 16));
+      setHandicapSide(r.handicapSide);
+      setHandicapValue(r.handicapValue as HandicapValue);
+      setBettingDirection(r.bettingDirection);
+      setDeduction(r.deduction);
+      setScores(r.scores);
+      setWatchReason(r.abandonReason || "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editBetId, editWatchId]);
 
   // ─── Derived ──────────────────────────────────────────────────────────────
 
@@ -331,6 +384,72 @@ export default function ReviewPage() {
     router.push("/records");
   };
 
+  // ─── Edit-mode handlers ───────────────────────────────────────────────────
+
+  const handleOpenEditConfirm = () => {
+    if (isEditingBet && editOriginalBet) {
+      setConfirmAmount(String(editOriginalBet.bets[0]?.amount ?? suggestedAmount));
+      setConfirmOpen(true);
+    }
+  };
+
+  const handleSaveBetEdit = () => {
+    if (!editOriginalBet) return;
+    const orig = editOriginalBet;
+    const amount = parseInt(confirmAmount.replace(/[^0-9]/g, ""), 10) || orig.bets[0]?.amount || suggestedAmount;
+    const isViolation = amount > suggestedAmount;
+    const parsedOdds = parseFloat(odds);
+    const finalOdds = isNaN(parsedOdds) || parsedOdds <= 0 ? (orig.bets[0]?.odds ?? 0.97) : parsedOdds;
+    const firstBet = orig.bets[0];
+    saveBetRecord({
+      ...orig,
+      match: matchName || orig.match,
+      homeTeam: homeTeam || orig.homeTeam,
+      awayTeam: awayTeam || orig.awayTeam,
+      kickoffTime: kickoffTime ? new Date(kickoffTime).toISOString() : orig.kickoffTime,
+      bettingDirection: bettingDirection || orig.bettingDirection,
+      handicapSide: handicapSide || orig.handicapSide,
+      handicapValue: handicapValue || orig.handicapValue,
+      grade: finalGrade,
+      manualS: canUpgradeS && manualS ? true : undefined,
+      totalScore,
+      scores,
+      deduction,
+      bets: [
+        firstBet
+          ? { ...firstBet, type: betType, handicapSide: handicapSide || firstBet.handicapSide,
+              handicapValue: handicapValue || firstBet.handicapValue, odds: finalOdds, amount }
+          : { id: `bs-${Date.now()}`, type: betType, handicapSide: handicapSide || "home",
+              handicapValue: handicapValue || "0", odds: finalOdds, amount, betTime: new Date().toISOString() },
+        ...orig.bets.slice(1),
+      ],
+      isDisciplineViolation: isViolation,
+      // Preserve: id, completionStatus, createdAt, result, convertedFromWatchId
+    });
+    router.push(`/records?id=${orig.id}`);
+  };
+
+  const handleSaveWatchEdit = () => {
+    if (!editOriginalWatch) return;
+    const orig = editOriginalWatch;
+    saveAbandonedRecord({
+      ...orig,
+      match: matchName || orig.match,
+      homeTeam: homeTeam || orig.homeTeam,
+      awayTeam: awayTeam || orig.awayTeam,
+      kickoffTime: kickoffTime ? new Date(kickoffTime).toISOString() : orig.kickoffTime,
+      bettingDirection: bettingDirection || orig.bettingDirection,
+      handicapSide: handicapSide || orig.handicapSide,
+      handicapValue: handicapValue || orig.handicapValue,
+      totalScore,
+      abandonReason: watchReason || orig.abandonReason,
+      scores,
+      deduction,
+      // Preserve: id, type, completionStatus, createdAt, actualResult, reviewConclusion, reviewNote, analysisVerdict, promotedToBetId
+    });
+    router.push(`/records?aid=${orig.id}`);
+  };
+
   // ─── Render ───────────────────────────────────────────────────────────────
 
   const overLimitBet   = todayCount.bets   >= settings.riskControls.maxDailyMatches;
@@ -345,26 +464,35 @@ export default function ReviewPage() {
             <ArrowLeft size={15} />
             <span className="text-sm">返回</span>
           </button>
-          <span className="font-semibold text-sm">纪律审查</span>
+          <span className="font-semibold text-sm">
+            {isEditingBet ? "编辑下注记录" : isEditingWatch ? "编辑观察记录" : "纪律审查"}
+          </span>
           <div className="w-10" />
         </div>
 
-        {/* Today's counters */}
-        <div className="flex gap-3 px-4 pb-3 text-[10px] text-muted-foreground">
-          <span>
-            今日下注
-            <span className={`font-mono mx-1 ${overLimitBet ? "text-loss" : "text-foreground"}`}>
-              {todayCount.bets}/{settings.riskControls.maxDailyMatches}
+        {/* Today's counters — hidden in edit mode */}
+        {!isEditing && (
+          <div className="flex gap-3 px-4 pb-3 text-[10px] text-muted-foreground">
+            <span>
+              今日下注
+              <span className={`font-mono mx-1 ${overLimitBet ? "text-loss" : "text-foreground"}`}>
+                {todayCount.bets}/{settings.riskControls.maxDailyMatches}
+              </span>
             </span>
-          </span>
-          <span>·</span>
-          <span>
-            今日观察
-            <span className={`font-mono mx-1 ${overLimitWatch ? "text-loss" : "text-foreground"}`}>
-              {todayCount.watches}/{settings.riskControls.maxDailyWatches}
+            <span>·</span>
+            <span>
+              今日观察
+              <span className={`font-mono mx-1 ${overLimitWatch ? "text-loss" : "text-foreground"}`}>
+                {todayCount.watches}/{settings.riskControls.maxDailyWatches}
+              </span>
             </span>
-          </span>
-        </div>
+          </div>
+        )}
+        {isEditing && (
+          <div className="px-4 pb-3 text-[10px] text-muted-foreground">
+            编辑模式 · ID {editBetId || editWatchId}
+          </div>
+        )}
       </div>
 
       <div className="px-4 py-4 space-y-6">
@@ -738,59 +866,136 @@ export default function ReviewPage() {
             </button>
           )}
 
-          {hardStopped && (
+          {hardStopped && !isEditing && (
             <p className="text-[11px] text-loss">⚠ 硬门槛未通过，强制转入观察</p>
           )}
 
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            <button
-              disabled={!coreReady}
-              onClick={handleOpenWatch}
-              className={`py-3 rounded font-bold text-sm ${
-                coreReady ? "bg-muted text-foreground active:opacity-80" : "bg-muted/50 text-muted-foreground/40"
-              }`}
-            >
-              转入观察
-            </button>
-            <button
-              disabled={!coreReady || routeToWatch}
-              onClick={handleOpenConfirm}
-              className={`py-3 rounded font-bold text-sm ${
-                coreReady && !routeToWatch ? "bg-foreground text-background active:opacity-80" : "bg-muted/50 text-muted-foreground/40"
-              }`}
-            >
-              保存下注记录
-            </button>
-          </div>
+          {/* Edit-mode inline watch reason */}
+          {isEditingWatch && (
+            <div className="pt-1">
+              <p className="text-[11px] text-muted-foreground mb-1.5">观察原因</p>
+              <textarea rows={2} value={watchReason} onChange={(e) => setWatchReason(e.target.value)}
+                className="w-full bg-muted rounded px-3 py-2 text-xs outline-none resize-none placeholder:text-muted-foreground/40"
+                placeholder="为什么转入观察..."
+              />
+            </div>
+          )}
+
+          {!isEditing && (
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                disabled={!coreReady}
+                onClick={handleOpenWatch}
+                className={`py-3 rounded font-bold text-sm ${
+                  coreReady ? "bg-muted text-foreground active:opacity-80" : "bg-muted/50 text-muted-foreground/40"
+                }`}
+              >
+                转入观察
+              </button>
+              <button
+                disabled={!coreReady || routeToWatch}
+                onClick={handleOpenConfirm}
+                className={`py-3 rounded font-bold text-sm ${
+                  coreReady && !routeToWatch ? "bg-foreground text-background active:opacity-80" : "bg-muted/50 text-muted-foreground/40"
+                }`}
+              >
+                保存下注记录
+              </button>
+            </div>
+          )}
+
+          {isEditingBet && (
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                onClick={() => router.back()}
+                className="py-3 rounded font-bold text-sm bg-muted text-foreground active:opacity-80"
+              >
+                取消
+              </button>
+              <button
+                disabled={!coreReady}
+                onClick={handleOpenEditConfirm}
+                className={`py-3 rounded font-bold text-sm ${
+                  coreReady ? "bg-foreground text-background active:opacity-80" : "bg-muted/50 text-muted-foreground/40"
+                }`}
+              >
+                保存修改
+              </button>
+            </div>
+          )}
+
+          {isEditingWatch && (
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                onClick={() => router.back()}
+                className="py-3 rounded font-bold text-sm bg-muted text-foreground active:opacity-80"
+              >
+                取消
+              </button>
+              <button
+                disabled={!coreReady}
+                onClick={handleSaveWatchEdit}
+                className={`py-3 rounded font-bold text-sm ${
+                  coreReady ? "bg-foreground text-background active:opacity-80" : "bg-muted/50 text-muted-foreground/40"
+                }`}
+              >
+                保存修改
+              </button>
+            </div>
+          )}
         </section>
       </div>
 
-      {/* Confirm bet dialog */}
-      {confirmOpen && (
-        <div className="fixed inset-0 z-50 bg-background/80 flex items-end">
-          <div className="w-full bg-card border-t border-border px-4 py-5 space-y-3 max-w-[430px] mx-auto max-h-[85vh] overflow-y-auto">
-            <p className="text-sm font-bold">确认下注</p>
-            {preview && (
-              <div className="rounded-md bg-muted px-4 py-3">
-                <p className="text-base font-bold font-mono">{preview}</p>
-              </div>
-            )}
-            <p className="text-[11px] text-muted-foreground">建议金额 ¥{suggestedAmount.toLocaleString()}（{finalGrade} 级）</p>
-            <input value={confirmAmount} onChange={(e) => setConfirmAmount(e.target.value)}
-              inputMode="numeric"
-              className="w-full bg-muted rounded px-3 py-3 text-lg font-mono outline-none" />
-            {overLimitBet && (
-              <p className="text-[11px] text-loss">⚠ 今日下注已达上限 {todayCount.bets}/{settings.riskControls.maxDailyMatches}</p>
-            )}
-            <button onClick={handleSaveBet}
-              className="w-full py-3 rounded font-bold text-sm bg-foreground text-background">
-              确认保存下注记录
-            </button>
-            <button onClick={() => setConfirmOpen(false)}
-              className="w-full py-2 text-xs text-muted-foreground">取消</button>
+      {/* Confirm bet dialog (used for both new and edit) */}
+      {confirmOpen && (() => {
+        const origAmount    = editOriginalBet?.bets[0]?.amount ?? 0;
+        const parsedAmount  = parseInt((confirmAmount || "").replace(/[^0-9]/g, ""), 10) || 0;
+        const amountChanged = isEditingBet && parsedAmount !== origAmount;
+        const hadResult     = !!editOriginalBet?.result;
+        return (
+          <div className="fixed inset-0 z-50 bg-background/80 flex items-end">
+            <div className="w-full bg-card border-t border-border px-4 py-5 space-y-3 max-w-[430px] mx-auto max-h-[85vh] overflow-y-auto">
+              <p className="text-sm font-bold">
+                {isEditingBet ? "确认修改" : "确认下注"}
+              </p>
+              {preview && (
+                <div className="rounded-md bg-muted px-4 py-3">
+                  <p className="text-base font-bold font-mono">{preview}</p>
+                </div>
+              )}
+              <p className="text-[11px] text-muted-foreground">建议金额 ¥{suggestedAmount.toLocaleString()}（{finalGrade} 级）</p>
+              <input value={confirmAmount} onChange={(e) => setConfirmAmount(e.target.value)}
+                inputMode="numeric"
+                className="w-full bg-muted rounded px-3 py-3 text-lg font-mono outline-none" />
+              {!isEditingBet && overLimitBet && (
+                <p className="text-[11px] text-loss">⚠ 今日下注已达上限 {todayCount.bets}/{settings.riskControls.maxDailyMatches}</p>
+              )}
+              {isEditingBet && amountChanged && hadResult && (
+                <div className="rounded border border-loss/40 bg-loss/10 px-3 py-2">
+                  <p className="text-[11px] text-loss font-semibold mb-0.5">⚠ 注意：修改金额会改变历史盈亏</p>
+                  <p className="text-[10px] text-loss/80">
+                    原金额 ¥{origAmount.toLocaleString()} → 新金额 ¥{parsedAmount.toLocaleString()}，
+                    月/年 ROI 与盈亏曲线会回溯更新。
+                  </p>
+                </div>
+              )}
+              {isEditingBet && amountChanged && hadResult && !editAmountWarningShown ? (
+                <button onClick={() => setEditAmountWarningShown(true)}
+                  className="w-full py-3 rounded font-bold text-sm bg-loss text-white">
+                  我已知晓，继续
+                </button>
+              ) : (
+                <button onClick={isEditingBet ? handleSaveBetEdit : handleSaveBet}
+                  className="w-full py-3 rounded font-bold text-sm bg-foreground text-background">
+                  {isEditingBet ? "确认保存修改" : "确认保存下注记录"}
+                </button>
+              )}
+              <button onClick={() => { setConfirmOpen(false); setEditAmountWarningShown(false); }}
+                className="w-full py-2 text-xs text-muted-foreground">取消</button>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Confirm watch dialog */}
       {watchOpen && (
@@ -817,5 +1022,13 @@ export default function ReviewPage() {
 
       <BottomNav />
     </div>
+  );
+}
+
+export default function ReviewPage() {
+  return (
+    <Suspense>
+      <ReviewInner />
+    </Suspense>
   );
 }

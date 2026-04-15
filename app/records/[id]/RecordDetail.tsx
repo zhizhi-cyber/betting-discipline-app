@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, ChevronDown, ChevronUp, Trash2, Star } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, Trash2, Star, Pencil } from "lucide-react";
 import type { Outcome, BetRecord, AnalysisVerdict, ScoreData } from "@/lib/types";
 import { calcPnl, getTotalBetAmount, SUBDIMS, formatBetPreview } from "@/lib/types";
 import { getBetRecords, saveBetRecord, deleteBetRecord } from "@/lib/storage";
@@ -145,6 +145,9 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
               <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning/15 text-warning font-bold">违纪</span>
             )}
             <span className={`text-xs font-black ${GRADE_COLORS[record.grade]}`}>{record.grade}级</span>
+            <button onClick={() => router.push(`/review?edit=${record.id}`)} className="text-muted-foreground p-1" aria-label="编辑">
+              <Pencil size={14} />
+            </button>
             <button onClick={() => setDeleteConfirm(true)} className="text-muted-foreground/50 p-1 -mr-1">
               <Trash2 size={14} />
             </button>

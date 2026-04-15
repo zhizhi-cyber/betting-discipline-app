@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, ChevronDown, ChevronUp, Trash2, Star } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, Trash2, Star, Pencil } from "lucide-react";
 import type { ReviewConclusion, AbandonedRecord, AnalysisVerdict, ScoreData, BetRecord } from "@/lib/types";
 import { SUBDIMS, formatBetPreview } from "@/lib/types";
 import { getAbandonedRecords, saveAbandonedRecord, deleteAbandonedRecord, promoteWatchToBet, getSettings, countToday } from "@/lib/storage";
@@ -160,9 +160,14 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
             <span className="text-sm">记录</span>
           </button>
           <span className="font-semibold text-sm">观察详情</span>
-          <button onClick={() => setDeleteConfirm(true)} className="text-muted-foreground/50 p-1 -mr-1">
-            <Trash2 size={14} />
-          </button>
+          <div className="flex items-center gap-1">
+            <button onClick={() => router.push(`/review?editWatch=${record.id}`)} className="text-muted-foreground p-1" aria-label="编辑">
+              <Pencil size={14} />
+            </button>
+            <button onClick={() => setDeleteConfirm(true)} className="text-muted-foreground/50 p-1 -mr-1">
+              <Trash2 size={14} />
+            </button>
+          </div>
         </div>
       </div>
 
