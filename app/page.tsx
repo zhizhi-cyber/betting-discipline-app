@@ -8,14 +8,14 @@ import { AreaChart, Area, ResponsiveContainer, YAxis } from "recharts";
 import { motion, useMotionValue, useTransform, animate } from "motion/react";
 import { getTotalPnl, getTotalBetAmount, type Outcome, type ReviewConclusion, type BetRecord, type AbandonedRecord } from "@/lib/mock-data";
 import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, calcYearStats, calcWeekStats, calcAllTimeStats, syncPendingReview, countToday } from "@/lib/storage";
-import { calcPnl, weekStart, weekEnd, matchDayKey, matchDayStart } from "@/lib/types";
+import { calcPnl, weekStart, weekEnd, matchDayKey, matchDayStart, parseKickoff } from "@/lib/types";
 // Hero combines PnL and goal tracking; home orchestrates glass UI accented with sparkline + halo.
 import BottomNav from "@/components/bottom-nav";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtDate(iso: string) {
-  const d = new Date(iso);
+  const d = parseKickoff(iso);
   return d.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric", weekday: "short" });
 }
 
@@ -158,11 +158,11 @@ export default function HomePage() {
     });
 
     const bets = getBetRecords().sort(
-      (a, b) => new Date(b.kickoffTime).getTime() - new Date(a.kickoffTime).getTime()
+      (a, b) => parseKickoff(b.kickoffTime).getTime() - parseKickoff(a.kickoffTime).getTime()
     );
     setRecentBets(bets.slice(0, 3));
     const abandoned = getAbandonedRecords().sort(
-      (a, b) => new Date(b.kickoffTime).getTime() - new Date(a.kickoffTime).getTime()
+      (a, b) => parseKickoff(b.kickoffTime).getTime() - parseKickoff(a.kickoffTime).getTime()
     );
     setRecentAbandoned(abandoned.slice(0, 2));
   }, [timeRange, mounted]);

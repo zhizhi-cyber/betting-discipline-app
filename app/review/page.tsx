@@ -31,6 +31,8 @@ import {
   emptyDeduction,
   formatBetPreview,
   formatSidedHandicap,
+  normalizeKickoff,
+  toDateTimeLocalValue,
 } from "@/lib/types";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -208,8 +210,8 @@ function ReviewInner() {
       setMatchName(r.match);
       setHomeTeam(r.homeTeam);
       setAwayTeam(r.awayTeam);
-      // datetime-local wants "YYYY-MM-DDTHH:mm" — slice ISO accordingly
-      setKickoffTime(r.kickoffTime.slice(0, 16));
+      // datetime-local wants "YYYY-MM-DDTHH:mm" in local — convert from stored ISO
+      setKickoffTime(toDateTimeLocalValue(r.kickoffTime));
       setHandicapSide(r.handicapSide);
       setHandicapValue(r.handicapValue as HandicapValue);
       setBettingDirection(r.bettingDirection);
@@ -225,7 +227,7 @@ function ReviewInner() {
       setMatchName(r.match);
       setHomeTeam(r.homeTeam);
       setAwayTeam(r.awayTeam);
-      setKickoffTime(r.kickoffTime.slice(0, 16));
+      setKickoffTime(toDateTimeLocalValue(r.kickoffTime));
       setHandicapSide(r.handicapSide);
       setHandicapValue(r.handicapValue as HandicapValue);
       setBettingDirection(r.bettingDirection);
@@ -345,7 +347,7 @@ function ReviewInner() {
       match: matchName || "未命名比赛",
       homeTeam: homeTeam || "主队",
       awayTeam: awayTeam || "客队",
-      kickoffTime: kickoffTime || new Date().toISOString(),
+      kickoffTime: kickoffTime ? normalizeKickoff(kickoffTime) : new Date().toISOString(),
       bettingDirection: bettingDirection || "home",
       handicapSide: handicapSide || "home",
       handicapValue,
@@ -385,7 +387,7 @@ function ReviewInner() {
       match: matchName || "未命名比赛",
       homeTeam: homeTeam || "主队",
       awayTeam: awayTeam || "客队",
-      kickoffTime: kickoffTime || new Date().toISOString(),
+      kickoffTime: kickoffTime ? normalizeKickoff(kickoffTime) : new Date().toISOString(),
       bettingDirection: bettingDirection || "home",
       handicapSide: handicapSide || "home",
       handicapValue,
@@ -423,7 +425,7 @@ function ReviewInner() {
       match: matchName || orig.match,
       homeTeam: homeTeam || orig.homeTeam,
       awayTeam: awayTeam || orig.awayTeam,
-      kickoffTime: kickoffTime ? new Date(kickoffTime).toISOString() : orig.kickoffTime,
+      kickoffTime: kickoffTime ? normalizeKickoff(kickoffTime) : orig.kickoffTime,
       bettingDirection: bettingDirection || orig.bettingDirection,
       handicapSide: handicapSide || orig.handicapSide,
       handicapValue: handicapValue || orig.handicapValue,
@@ -454,7 +456,7 @@ function ReviewInner() {
       match: matchName || orig.match,
       homeTeam: homeTeam || orig.homeTeam,
       awayTeam: awayTeam || orig.awayTeam,
-      kickoffTime: kickoffTime ? new Date(kickoffTime).toISOString() : orig.kickoffTime,
+      kickoffTime: kickoffTime ? normalizeKickoff(kickoffTime) : orig.kickoffTime,
       bettingDirection: bettingDirection || orig.bettingDirection,
       handicapSide: handicapSide || orig.handicapSide,
       handicapValue: handicapValue || orig.handicapValue,

@@ -390,11 +390,46 @@ export function emptyDeduction(): HandicapDeduction {
 // A "day" for stats/grouping starts at 10:00 local time.
 // Any kickoff before 10:00 is attributed to the previous calendar day.
 
+/**
+ * Parse a kickoff time string into a Date, treating bare "YYYY-MM-DDTHH:MM"
+ * (from <input type="datetime-local">) as LOCAL time rather than UTC.
+ * Strings with explicit Z or ±HH:MM offsets are passed through.
+ *
+ * Workaround for Android Chrome versions that interpret bare datetime strings
+ * as UTC — this caused displayed kickoff times to shift by the TZ offset.
+ */
+export function parseKickoff(s: string | Date): Date {
+  if (s instanceof Date) return s;
+  if (!s) return new Date(NaN);
+  // Has explicit timezone info → let JS parse natively
+  if (/Z$|[+-]\d{2}:?\d{2}$/.test(s)) return new Date(s);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return new Date(s);
+  return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], m[6] ? +m[6] : 0);
+}
+
+/** Normalize any kickoff string to a canonical UTC ISO string. */
+export function normalizeKickoff(s: string): string {
+  if (!s) return s;
+  if (/Z$|[+-]\d{2}:?\d{2}$/.test(s)) return s;
+  const d = parseKickoff(s);
+  return isNaN(d.getTime()) ? s : d.toISOString();
+}
+
+/** Format an ISO kickoff string as a "YYYY-MM-DDTHH:MM" value for datetime-local inputs. */
+export function toDateTimeLocalValue(iso: string): string {
+  if (!iso) return "";
+  const d = parseKickoff(iso);
+  if (isNaN(d.getTime())) return iso.slice(0, 16);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 export const DAY_BOUNDARY_HOUR = 10;
 
 /** Returns Date at 10:00 local of the "match day" that `iso` belongs to. */
 export function matchDayStart(iso: string | Date): Date {
-  const d = typeof iso === "string" ? new Date(iso) : new Date(iso);
+  const d = typeof iso === "string" ? parseKickoff(iso) : new Date(iso);
   const anchor = new Date(d);
   anchor.setHours(DAY_BOUNDARY_HOUR, 0, 0, 0);
   if (d.getHours() < DAY_BOUNDARY_HOUR) {
@@ -456,7 +491,7 @@ export function sameWeek(a: Date, b: Date): boolean {
 
 export function getCompletionStatus(record: BetRecord): CompletionStatus {
   if (!record.result) {
-    const kickoff = new Date(record.kickoffTime);
+    const kickoff = parseKickoff(record.kickoffTime);
     const now = new Date();
     const diffMs = now.getTime() - kickoff.getTime();
     const ninetyMin = 90 * 60 * 1000;

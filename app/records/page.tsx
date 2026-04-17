@@ -14,7 +14,7 @@ import {
   type UnifiedRecord,
   calcPnl,
 } from "@/lib/mock-data";
-import { weekStart, weekEnd, matchDayKey, matchDayStart, formatMatchDayLabel, formatBetDirection } from "@/lib/types";
+import { weekStart, weekEnd, matchDayKey, matchDayStart, formatMatchDayLabel, formatBetDirection, parseKickoff } from "@/lib/types";
 import { getBetRecords, getAbandonedRecords, getSettings, saveSettings } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 import AnalyticsPanel from "@/components/analytics-panel";
@@ -26,7 +26,7 @@ type ViewMode = "week" | "month" | "year";
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function fmtTime(iso: string) {
-  return new Date(iso).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+  return parseKickoff(iso).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 }
 
 function fmtMd(d: Date) {
@@ -477,19 +477,19 @@ function YearView({
   const now = new Date();
   const currentYear = now.getFullYear();
 
-  const yearBets = useMemo(() => allBetRecords.filter((r) => new Date(r.kickoffTime).getFullYear() === year), [allBetRecords, year]);
-  const yearAbandoned = useMemo(() => allAbandonedRecords.filter((r) => new Date(r.kickoffTime).getFullYear() === year), [allAbandonedRecords, year]);
+  const yearBets = useMemo(() => allBetRecords.filter((r) => parseKickoff(r.kickoffTime).getFullYear() === year), [allBetRecords, year]);
+  const yearAbandoned = useMemo(() => allAbandonedRecords.filter((r) => parseKickoff(r.kickoffTime).getFullYear() === year), [allAbandonedRecords, year]);
   const yearStats = useMemo(() => calcBetStats(yearBets), [yearBets]);
 
   const months = useMemo(() => {
     return Array.from({ length: 12 }, (_, i) => {
       const m = i + 1;
       const bets = allBetRecords.filter((r) => {
-        const d = new Date(r.kickoffTime);
+        const d = parseKickoff(r.kickoffTime);
         return d.getFullYear() === year && d.getMonth() + 1 === m;
       });
       const aband = allAbandonedRecords.filter((r) => {
-        const d = new Date(r.kickoffTime);
+        const d = parseKickoff(r.kickoffTime);
         return d.getFullYear() === year && d.getMonth() + 1 === m;
       });
       const stats = calcBetStats(bets);

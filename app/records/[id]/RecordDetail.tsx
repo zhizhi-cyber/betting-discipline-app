@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronUp, Trash2, Star, Pencil } from "lucide-react";
 import type { Outcome, BetRecord, AnalysisVerdict, ScoreData, SidedHandicap } from "@/lib/types";
-import { calcPnl, getTotalBetAmount, SUBDIMS, formatBetPreview, formatSidedHandicap, ERROR_OPTIONS, POSITIVE_OPTIONS } from "@/lib/types";
+import { calcPnl, getTotalBetAmount, SUBDIMS, formatBetPreview, formatSidedHandicap, ERROR_OPTIONS, POSITIVE_OPTIONS, parseKickoff } from "@/lib/types";
 import { getBetRecords, saveBetRecord, deleteBetRecord } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
@@ -37,7 +37,7 @@ const VERDICT_OPTIONS: { key: AnalysisVerdict; label: string; cls: string }[] = 
 ];
 
 function fmtDateTime(iso: string) {
-  return new Date(iso).toLocaleString("zh-CN", {
+  return parseKickoff(iso).toLocaleString("zh-CN", {
     month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit",
   });
 }

@@ -4,7 +4,7 @@ import type {
   UnifiedRecord,
   CompletionStatus,
 } from "./types";
-import { calcPnl, matchDayStart, matchDayKey, type AppSettings } from "./types";
+import { calcPnl, matchDayStart, matchDayKey, parseKickoff, type AppSettings } from "./types";
 export type { AppSettings } from "./types";
 
 // ─── Keys ─────────────────────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ export function getAllRecords(): UnifiedRecord[] {
   const bets = getBetRecords();
   const abandoned = getAbandonedRecords();
   return [...bets, ...abandoned].sort(
-    (a, b) => new Date(b.kickoffTime).getTime() - new Date(a.kickoffTime).getTime()
+    (a, b) => parseKickoff(b.kickoffTime).getTime() - parseKickoff(a.kickoffTime).getTime()
   );
 }
 
@@ -176,7 +176,7 @@ export function syncPendingReview(): string[] {
 
   const next = all.map((r) => {
     if (r.result) return r; // already has result
-    const kickoff = new Date(r.kickoffTime);
+    const kickoff = parseKickoff(r.kickoffTime);
     if (now.getTime() - kickoff.getTime() >= ninetyMin && r.completionStatus === "pristine") {
       updated.push(r.id);
       return { ...r, completionStatus: "pending_review" as CompletionStatus };
@@ -324,7 +324,7 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
   // Streak (latest consecutive win/loss across settled bets by kickoff time desc)
   const settled = [...bets]
     .filter((r) => !!r.result)
-    .sort((a, b) => new Date(b.kickoffTime).getTime() - new Date(a.kickoffTime).getTime());
+    .sort((a, b) => parseKickoff(b.kickoffTime).getTime() - parseKickoff(a.kickoffTime).getTime());
   let streak: RecordsAnalytics["streak"] = { type: "none", count: 0 };
   if (settled.length > 0) {
     const first = settled[0].result!.outcome;
