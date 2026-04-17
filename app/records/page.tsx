@@ -161,7 +161,7 @@ function BetRow({ r }: { r: BetRecord }) {
               })}
             </span>
             <span className="mx-1 opacity-30">·</span>
-            ¥{(betAmt / 1000).toFixed(0)}k
+            <span className="text-sm font-mono font-semibold tabular-nums text-foreground/90">¥{betAmt.toLocaleString()}</span>
             <span className="mx-1 opacity-30">·</span>
             {fmtTime(r.kickoffTime)}
           </p>
@@ -555,7 +555,7 @@ function YearView({
                         )}
                         {hasPnl && (
                           <span className="text-[10px] text-muted-foreground font-mono">
-                            投¥{(stats.totalBet / 1000).toFixed(0)}k
+                            投¥{stats.totalBet.toLocaleString()}
                           </span>
                         )}
                       </div>

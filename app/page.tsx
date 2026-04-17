@@ -8,7 +8,7 @@ import { AreaChart, Area, ResponsiveContainer, YAxis } from "recharts";
 import { motion, useMotionValue, useTransform, animate } from "motion/react";
 import { getTotalPnl, getTotalBetAmount, type Outcome, type ReviewConclusion, type BetRecord, type AbandonedRecord } from "@/lib/mock-data";
 import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, calcYearStats, calcWeekStats, calcAllTimeStats, syncPendingReview, countToday } from "@/lib/storage";
-import { calcPnl, weekStart, weekEnd, matchDayKey, matchDayStart, parseKickoff } from "@/lib/types";
+import { calcPnl, weekStart, weekEnd, matchDayKey, matchDayStart, parseKickoff, formatBetDirection } from "@/lib/types";
 // Hero combines PnL and goal tracking; home orchestrates glass UI accented with sparkline + halo.
 import BottomNav from "@/components/bottom-nav";
 
@@ -353,7 +353,7 @@ export default function HomePage() {
               <StatCell
                 icon={<Activity size={11} strokeWidth={2} />}
                 label={`${rangeStatLabel}投注`}
-                value={stats.totalBet > 0 ? `¥${(stats.totalBet / 1000).toFixed(0)}k` : "—"}
+                value={stats.totalBet > 0 ? `¥${stats.totalBet.toLocaleString()}` : "—"}
               />
               <StatCell
                 icon={<TrendingUp size={11} strokeWidth={2} />}
@@ -472,12 +472,25 @@ export default function HomePage() {
                             </span>
                           )}
                         </div>
+                        {(r.homeTeam || r.awayTeam) && (
+                          <p className="text-[11px] text-foreground/70 mt-0.5 truncate">
+                            <span className="font-medium">{r.homeTeam || "主队"}</span>
+                            <span className="mx-1 text-muted-foreground/50">vs</span>
+                            <span className="font-medium">{r.awayTeam || "客队"}</span>
+                          </p>
+                        )}
                         <p className="text-[10px] text-muted-foreground mt-0.5">
-                          {r.bettingDirection === "home" ? "投主" : "投客"}
+                          <span className="text-foreground/80 font-medium">
+                            {formatBetDirection({
+                              homeTeam: r.homeTeam,
+                              awayTeam: r.awayTeam,
+                              bettingDirection: r.bettingDirection,
+                              handicapSide: r.handicapSide,
+                              handicapValue: r.handicapValue,
+                            })}
+                          </span>
                           <span className="mx-1 opacity-30">·</span>
-                          {r.handicapSide === "home" ? "主让" : "客让"}{r.handicapValue}
-                          <span className="mx-1 opacity-30">·</span>
-                          ¥{(betAmt / 1000).toFixed(0)}k
+                          <span className="text-sm font-mono font-semibold tabular-nums text-foreground/90">¥{betAmt.toLocaleString()}</span>
                           <span className="mx-1 opacity-30">·</span>
                           {fmtDate(r.kickoffTime)}
                         </p>
@@ -517,19 +530,34 @@ export default function HomePage() {
               {recentAbandoned.map((a) => (
                 <button key={a.id} onClick={() => router.push(`/records?aid=${a.id}`)} className="w-full text-left">
                   <div className="flex items-center gap-3 py-3 first:pt-0 active:opacity-60 transition-opacity">
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0 opacity-60">
                       <div className="flex items-center gap-1.5">
-                        <p className="text-xs font-semibold truncate opacity-60">{a.match}</p>
+                        <p className="text-xs font-semibold truncate">{a.match}</p>
                         {a.finalScore && (
                           <span className="text-[10px] font-mono tabular-nums text-foreground/60 shrink-0 bg-muted px-1.5 py-0.5 rounded">
                             {a.finalScore.home}:{a.finalScore.away}
                           </span>
                         )}
                       </div>
-                      <p className="text-[10px] text-muted-foreground mt-0.5 opacity-60">
-                        {a.bettingDirection === "home" ? "投主" : "投客"}
+                      {(a.homeTeam || a.awayTeam) && (
+                        <p className="text-[11px] text-foreground/70 mt-0.5 truncate">
+                          <span>{a.homeTeam || "主队"}</span>
+                          <span className="mx-1 text-muted-foreground/50">vs</span>
+                          <span>{a.awayTeam || "客队"}</span>
+                        </p>
+                      )}
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        观察
                         <span className="mx-1 opacity-30">·</span>
-                        {a.handicapSide === "home" ? "主让" : "客让"}{a.handicapValue}
+                        <span className="text-foreground/80">
+                          {formatBetDirection({
+                            homeTeam: a.homeTeam,
+                            awayTeam: a.awayTeam,
+                            bettingDirection: a.bettingDirection,
+                            handicapSide: a.handicapSide,
+                            handicapValue: a.handicapValue,
+                          })}
+                        </span>
                         <span className="mx-1 opacity-30">·</span>
                         {fmtDate(a.kickoffTime)}
                       </p>

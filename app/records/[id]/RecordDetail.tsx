@@ -308,7 +308,7 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
                   </div>
                   <div>
                     <p className="text-[10px] text-muted-foreground">金额</p>
-                    <p className="text-xs font-semibold font-mono mt-0.5">¥{bet.amount.toLocaleString()}</p>
+                    <p className="text-sm font-bold font-mono tabular-nums mt-0.5">¥{bet.amount.toLocaleString()}</p>
                   </div>
                 </div>
               </div>
