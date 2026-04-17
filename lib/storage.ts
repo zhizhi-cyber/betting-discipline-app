@@ -62,6 +62,55 @@ function save<T>(key: string, value: T): void {
   }
 }
 
+// ─── Backup / Restore ─────────────────────────────────────────────────────────
+
+export interface BackupPayload {
+  version: 1;
+  exportedAt: string;
+  bets: BetRecord[];
+  watches: AbandonedRecord[];
+  settings: AppSettings;
+}
+
+export function exportAllData(): BackupPayload {
+  return {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    bets: load<BetRecord[]>(KEYS.BET_RECORDS, []),
+    watches: load<AbandonedRecord[]>(KEYS.ABANDONED_RECORDS, []),
+    settings: load<AppSettings>(KEYS.SETTINGS, DEFAULT_SETTINGS),
+  };
+}
+
+export function importAllData(
+  payload: unknown,
+  mode: "replace" | "merge" = "replace"
+): { bets: number; watches: number } {
+  const p = payload as Partial<BackupPayload>;
+  if (!p || typeof p !== "object" || !Array.isArray(p.bets) || !Array.isArray(p.watches)) {
+    throw new Error("文件格式不正确");
+  }
+
+  if (mode === "replace") {
+    save(KEYS.BET_RECORDS, p.bets);
+    save(KEYS.ABANDONED_RECORDS, p.watches);
+    if (p.settings) save(KEYS.SETTINGS, p.settings);
+    return { bets: p.bets.length, watches: p.watches.length };
+  }
+
+  // merge: union by id, incoming wins on conflict
+  const curBets = load<BetRecord[]>(KEYS.BET_RECORDS, []);
+  const curWatches = load<AbandonedRecord[]>(KEYS.ABANDONED_RECORDS, []);
+  const betMap = new Map(curBets.map((b) => [b.id, b]));
+  p.bets.forEach((b) => betMap.set(b.id, b));
+  const watchMap = new Map(curWatches.map((w) => [w.id, w]));
+  p.watches.forEach((w) => watchMap.set(w.id, w));
+
+  save(KEYS.BET_RECORDS, Array.from(betMap.values()));
+  save(KEYS.ABANDONED_RECORDS, Array.from(watchMap.values()));
+  return { bets: p.bets.length, watches: p.watches.length };
+}
+
 // ─── Bet Records ──────────────────────────────────────────────────────────────
 
 export function getBetRecords(): BetRecord[] {

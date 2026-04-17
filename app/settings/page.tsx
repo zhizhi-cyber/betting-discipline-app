@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
-import { DEFAULT_SETTINGS, getSettings, saveSettings, type AppSettings } from "@/lib/storage";
+import { ArrowLeft, Download, Upload } from "lucide-react";
+import { DEFAULT_SETTINGS, getSettings, saveSettings, exportAllData, importAllData, type AppSettings } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
 
@@ -28,6 +28,42 @@ export default function SettingsPage() {
   const handleSave = () => {
     saveSettings(settings);
     showToast("设置已保存", "success");
+  };
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExport = () => {
+    try {
+      const data = exportAllData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+      a.href = url;
+      a.download = `dayingjia-backup-${ts}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      showToast(`已导出 ${data.bets.length} 条下注 + ${data.watches.length} 条观察`, "success");
+    } catch {
+      showToast("导出失败", "error");
+    }
+  };
+
+  const handleImport = async (file: File) => {
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      const mode = confirm(
+        "选择导入方式:\n\n确定 = 覆盖(清空现有数据后导入)\n取消 = 合并(按ID合并,导入的优先)"
+      ) ? "replace" : "merge";
+      const r = importAllData(payload, mode);
+      showToast(`已导入 ${r.bets} 下注 + ${r.watches} 观察`, "success");
+      setTimeout(() => location.reload(), 800);
+    } catch (e) {
+      showToast((e as Error).message || "导入失败", "error");
+    }
   };
 
   return (
@@ -156,6 +192,47 @@ export default function SettingsPage() {
               </div>
             </div>
           </div>
+        </section>
+
+        {/* ── Backup ───────────────────────────────────────────────── */}
+        <section>
+          <SectionLabel>数据备份</SectionLabel>
+          <div className="border border-border rounded-md overflow-hidden divide-y divide-border">
+            <button
+              onClick={handleExport}
+              className="w-full px-4 py-3 bg-card flex items-center justify-between active:opacity-70"
+            >
+              <div className="flex items-center gap-2">
+                <Download size={14} className="text-muted-foreground" />
+                <span className="text-xs font-medium">导出为 JSON 文件</span>
+              </div>
+              <span className="text-[10px] text-muted-foreground">下载到本机</span>
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="w-full px-4 py-3 bg-card flex items-center justify-between active:opacity-70"
+            >
+              <div className="flex items-center gap-2">
+                <Upload size={14} className="text-muted-foreground" />
+                <span className="text-xs font-medium">从 JSON 文件恢复</span>
+              </div>
+              <span className="text-[10px] text-muted-foreground">选择备份</span>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) handleImport(f);
+                e.target.value = "";
+              }}
+            />
+          </div>
+          <p className="text-[10px] text-muted-foreground/60 mt-2 leading-relaxed">
+            重装应用前请先导出备份。重装后在新图标里打开此页,点"从 JSON 文件恢复"即可。
+          </p>
         </section>
 
         {/* ── About ────────────────────────────────────────────────── */}
