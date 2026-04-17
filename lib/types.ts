@@ -367,6 +367,52 @@ export function emptyDeduction(): HandicapDeduction {
   };
 }
 
+// ─── Match-day boundary (10:00 → next 10:00) ──────────────────────────────────
+// A "day" for stats/grouping starts at 10:00 local time.
+// Any kickoff before 10:00 is attributed to the previous calendar day.
+
+export const DAY_BOUNDARY_HOUR = 10;
+
+/** Returns Date at 10:00 local of the "match day" that `iso` belongs to. */
+export function matchDayStart(iso: string | Date): Date {
+  const d = typeof iso === "string" ? new Date(iso) : new Date(iso);
+  const anchor = new Date(d);
+  anchor.setHours(DAY_BOUNDARY_HOUR, 0, 0, 0);
+  if (d.getHours() < DAY_BOUNDARY_HOUR) {
+    anchor.setDate(anchor.getDate() - 1);
+  }
+  return anchor;
+}
+
+/** Returns yyyy-mm-dd string for the match day `iso` belongs to. */
+export function matchDayKey(iso: string | Date): string {
+  const a = matchDayStart(iso);
+  const y = a.getFullYear();
+  const m = String(a.getMonth() + 1).padStart(2, "0");
+  const d = String(a.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/** Returns [start, end) interval (exclusive end) for the match-day anchored at `anchor`. */
+export function matchDayRange(anchor: Date): { start: Date; end: Date } {
+  const start = matchDayStart(anchor.toISOString());
+  // If anchor is already at/after 10am it belongs to today's match-day, matchDayStart gives today 10am.
+  // Else matchDayStart gives yesterday 10am. In both cases end = start + 24h.
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { start, end };
+}
+
+/**
+ * Human-readable match-day key like "4月16日 周四" for a yyyy-mm-dd key.
+ */
+export function formatMatchDayLabel(dayKey: string): string {
+  // dayKey is yyyy-mm-dd representing the 10am anchor date
+  const [y, m, d] = dayKey.split("-").map((x) => parseInt(x, 10));
+  const dt = new Date(y, m - 1, d, 12);
+  return dt.toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" });
+}
+
 // ISO week start (Monday). Returns Date set to 00:00 on Monday of that week.
 export function weekStart(date: Date): Date {
   const d = new Date(date);

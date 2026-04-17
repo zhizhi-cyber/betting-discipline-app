@@ -155,14 +155,14 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
   };
 
   return (
-    <div className="min-h-screen bg-background pb-28">
+    <div className="min-h-screen pb-28">
       {toastNode}
 
       <div className="sticky top-0 z-20 bg-background border-b border-border">
         <div className="flex items-center justify-between px-4 py-3">
           <button onClick={() => router.back()} className="flex items-center gap-1 text-muted-foreground">
             <ArrowLeft size={15} />
-            <span className="text-sm">记录</span>
+            <span className="text-sm">返回</span>
           </button>
           <span className="font-semibold text-sm">观察详情</span>
           <div className="flex items-center gap-1">
@@ -286,12 +286,7 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
                 {record.deduction.suspectedTrap && (
                   <p className="text-[10px] text-warning font-medium">⚠ 记录了诱盘可能</p>
                 )}
-                {record.deduction.personalAnalysis && (
-                  <div className="rounded-md bg-muted/40 px-3 py-2">
-                    <p className="text-[10px] font-bold text-foreground mb-1">个人分析</p>
-                    <p className="text-xs text-foreground/90 leading-relaxed whitespace-pre-wrap">{record.deduction.personalAnalysis}</p>
-                  </div>
-                )}
+                {/* 个人分析 intentionally omitted here — shown once in "个人分析回看" below */}
               </div>
             )}
           </div>

@@ -3,12 +3,13 @@
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Plus, Settings, ChevronRight } from "lucide-react";
+import { Plus, Settings, ChevronRight, Target, Activity, TrendingUp } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer, YAxis } from "recharts";
-import { motion } from "motion/react";
+import { motion, useMotionValue, useTransform, animate } from "motion/react";
 import { getTotalPnl, getTotalBetAmount, type Outcome, type ReviewConclusion, type BetRecord, type AbandonedRecord } from "@/lib/mock-data";
 import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, calcYearStats, calcWeekStats, calcAllTimeStats, syncPendingReview, countToday } from "@/lib/storage";
-import { calcPnl, weekStart, weekEnd } from "@/lib/types";
+import { calcPnl, weekStart, weekEnd, matchDayKey, matchDayStart } from "@/lib/types";
+// Hero combines PnL and goal tracking; home orchestrates glass UI accented with sparkline + halo.
 import BottomNav from "@/components/bottom-nav";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -16,13 +17,6 @@ import BottomNav from "@/components/bottom-nav";
 function fmtDate(iso: string) {
   const d = new Date(iso);
   return d.toLocaleDateString("zh-CN", { month: "numeric", day: "numeric", weekday: "short" });
-}
-
-function isoDay(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
 }
 
 const OUTCOME_LABELS: Record<Outcome, string> = {
@@ -44,33 +38,50 @@ const GRADE_COLORS: Record<string, string> = {
 
 type TimeRange = "week" | "month" | "year" | "all";
 
+// ─── Count-up number ──────────────────────────────────────────────────────────
+
+function CountUp({ value, className }: { value: number; className?: string }) {
+  const mv = useMotionValue(0);
+  const rounded = useTransform(mv, (v) => {
+    const n = Math.round(v);
+    return (n > 0 ? "+" : n === 0 ? "" : "") + n.toLocaleString();
+  });
+  useEffect(() => {
+    const controls = animate(mv, value, { duration: 0.7, ease: "easeOut" });
+    return controls.stop;
+  }, [value, mv]);
+  return <motion.span className={className}>{rounded}</motion.span>;
+}
+
 // ─── Progress Ring ────────────────────────────────────────────────────────────
 
-function ProgressRing({ percent, size = 64, color }: { percent: number; size?: number; color: string }) {
+function ProgressRing({ percent, size = 72, color }: { percent: number; size?: number; color: string }) {
   const stroke = 6;
   const radius = (size - stroke) / 2;
   const circ = 2 * Math.PI * radius;
   const clamped = Math.max(0, Math.min(100, percent));
   const offset = circ - (clamped / 100) * circ;
   return (
-    <svg width={size} height={size} className="shrink-0">
-      <circle cx={size / 2} cy={size / 2} r={radius}
-        stroke="currentColor" strokeWidth={stroke} fill="none"
-        className="text-border"
-      />
-      <circle cx={size / 2} cy={size / 2} r={radius}
-        stroke={color} strokeWidth={stroke} fill="none"
-        strokeDasharray={circ} strokeDashoffset={offset}
-        strokeLinecap="round"
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        style={{ transition: "stroke-dashoffset 600ms ease-out" }}
-      />
-      <text x="50%" y="50%"
-        dominantBaseline="central" textAnchor="middle"
-        className="fill-foreground font-mono font-black"
-        fontSize={size * 0.26}
-      >{Math.round(clamped)}%</text>
-    </svg>
+    <div className="relative shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="absolute inset-0">
+        <circle cx={size / 2} cy={size / 2} r={radius}
+          stroke="currentColor" strokeWidth={stroke} fill="none"
+          className="text-border/50"
+        />
+        <circle cx={size / 2} cy={size / 2} r={radius}
+          stroke={color} strokeWidth={stroke} fill="none"
+          strokeDasharray={circ} strokeDashoffset={offset}
+          strokeLinecap="round"
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          style={{ transition: "stroke-dashoffset 700ms cubic-bezier(.2,.8,.2,1)" }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="font-mono font-black text-foreground" style={{ fontSize: size * 0.26 }}>
+          {Math.round(clamped)}%
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -90,7 +101,7 @@ export default function HomePage() {
   const [allBets, setAllBets] = useState<BetRecord[]>([]);
   const [allAbandoned, setAllAbandoned] = useState<AbandonedRecord[]>([]);
 
-  // Initial load: settings + records + default time range
+  // Initial load
   useEffect(() => {
     syncPendingReview();
     const settings = getSettings();
@@ -156,18 +167,25 @@ export default function HomePage() {
     setRecentAbandoned(abandoned.slice(0, 2));
   }, [timeRange, mounted]);
 
-  // Yesterday's activity
-  const yesterday = useMemo(() => {
-    const d = new Date();
-    d.setDate(d.getDate() - 1);
-    return d;
+  // Yesterday's activity — based on match-day boundary (10:00)
+  const todayDayKey = useMemo(() => matchDayKey(new Date()), []);
+  const yesterdayKey = useMemo(() => {
+    const a = matchDayStart(new Date());
+    a.setDate(a.getDate() - 1);
+    // a is at 10am of yesterday; derive yyyy-mm-dd
+    const y = a.getFullYear();
+    const m = String(a.getMonth() + 1).padStart(2, "0");
+    const d = String(a.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
   }, []);
-  const yesterdayKey = useMemo(() => isoDay(yesterday), [yesterday]);
+  const yesterdayDate = useMemo(() => {
+    const [y, m, d] = yesterdayKey.split("-").map((n) => parseInt(n, 10));
+    return new Date(y, m - 1, d);
+  }, [yesterdayKey]);
 
   const yesterdayStats = useMemo(() => {
-    const sameDay = (iso: string) => isoDay(new Date(iso)) === yesterdayKey;
-    const bets = allBets.filter((r) => sameDay(r.kickoffTime));
-    const watches = allAbandoned.filter((r) => sameDay(r.kickoffTime));
+    const bets = allBets.filter((r) => matchDayKey(r.kickoffTime) === yesterdayKey);
+    const watches = allAbandoned.filter((r) => matchDayKey(r.kickoffTime) === yesterdayKey);
     let pnl = 0;
     let settled = 0, unsettled = 0;
     for (const r of bets) {
@@ -181,31 +199,30 @@ export default function HomePage() {
     return { bets: bets.length, watches: watches.length, pnl, settled, unsettled };
   }, [allBets, allAbandoned, yesterdayKey]);
 
-  // Sparkline data: running sum of daily PnL over last N days based on timeRange
+  // Sparkline — daily PnL (running sum) grouped by match-day over window
   const sparkData = useMemo(() => {
-    const now = new Date();
     let days = 7;
     if (timeRange === "month") days = 30;
     else if (timeRange === "year") days = 90;
     else if (timeRange === "all") days = 90;
 
-    const daily: { day: string; pnl: number }[] = [];
+    const anchor = matchDayStart(new Date());
+    const daily: { key: string; pnl: number }[] = [];
     for (let i = days - 1; i >= 0; i--) {
-      const d = new Date(now);
+      const d = new Date(anchor);
       d.setDate(d.getDate() - i);
-      d.setHours(0, 0, 0, 0);
-      const end = new Date(d); end.setHours(23, 59, 59, 999);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      const key = `${y}-${m}-${dd}`;
       let dayPnl = 0;
       for (const r of allBets) {
         if (!r.result) continue;
-        const kt = new Date(r.kickoffTime);
-        if (kt >= d && kt <= end) {
-          dayPnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, r.result!.outcome), 0);
-        }
+        if (matchDayKey(r.kickoffTime) !== key) continue;
+        dayPnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, r.result!.outcome), 0);
       }
-      daily.push({ day: isoDay(d), pnl: dayPnl });
+      daily.push({ key, pnl: dayPnl });
     }
-    // Cumulative
     let running = 0;
     return daily.map((d) => ({ ...d, cum: (running += d.pnl) }));
   }, [allBets, timeRange]);
@@ -216,16 +233,17 @@ export default function HomePage() {
   const overBet = todayCount.bets >= dailyLimits.bets;
   const overWatch = todayCount.watches >= dailyLimits.watches;
 
-  // Goal progress (red if on-track, muted if behind, red if exceeded)
   const hasTarget = target > 0 && timeRange !== "all";
   const progress = hasTarget ? Math.max(0, Math.min(100, (stats.totalPnl / target) * 100)) : 0;
   const gap = target - stats.totalPnl;
   const isProfit = stats.totalPnl >= 0;
-  const profitColor = "#e03535";  // red = profit (locked)
-  const lossColor = "#2a9d5c";    // green = loss (locked)
+  const profitColor = "#e03535";  // 盈利红 (locked)
+  const lossColor = "#2a9d5c";    // 亏损绿 (locked)
+
+  void todayDayKey; // reserved for future "today" card
 
   return (
-    <div className="min-h-screen bg-background pb-28">
+    <div className="min-h-screen pb-28">
 
       {/* ── Pending Review Alert ────────────────────────────────── */}
       {stats.pendingReviewCount > 0 && (
@@ -250,22 +268,22 @@ export default function HomePage() {
         </Link>
       </div>
 
-      {/* ── Hero: PnL + Goal (merged card) ────────────────────── */}
+      {/* ── Hero: PnL + Goal (frosted) ────────────────────────── */}
       <div className="px-4">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35, ease: "easeOut" }}
-          className="relative rounded-2xl overflow-hidden border border-border/60 bg-gradient-to-br from-card via-card to-background"
+          transition={{ duration: 0.4, ease: "easeOut" }}
+          className="relative rounded-2xl overflow-hidden border border-white/[0.06] bg-card/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
         >
-          {/* Subtle sparkline background */}
+          {/* Sparkline as ambient bottom layer */}
           {hasSparkData && (
-            <div className="absolute inset-x-0 bottom-0 h-24 pointer-events-none opacity-60">
+            <div className="absolute inset-x-0 bottom-0 h-20 pointer-events-none opacity-50">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={sparkData} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
                   <defs>
                     <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={isProfit ? profitColor : lossColor} stopOpacity={0.25} />
+                      <stop offset="0%" stopColor={isProfit ? profitColor : lossColor} stopOpacity={0.3} />
                       <stop offset="100%" stopColor={isProfit ? profitColor : lossColor} stopOpacity={0} />
                     </linearGradient>
                   </defs>
@@ -279,7 +297,7 @@ export default function HomePage() {
 
           <div className="relative px-5 pt-4 pb-5">
             {/* Time range tabs */}
-            <div className="flex items-center gap-0.5 bg-background/50 backdrop-blur rounded-full p-0.5 w-fit mb-3">
+            <div className="flex items-center gap-0.5 bg-background/40 backdrop-blur rounded-full p-0.5 w-fit mb-3 border border-white/[0.04]">
               {(["week", "month", "year", "all"] as const).map((r) => (
                 <button key={r} onClick={() => setTimeRange(r)}
                   className={`text-[11px] font-semibold px-3 py-1 rounded-full transition-colors ${
@@ -293,66 +311,81 @@ export default function HomePage() {
 
             <p className="text-[10px] text-muted-foreground/70 mb-1">{rangeLabel}</p>
 
-            <div className="flex items-end gap-4">
+            {/* Top row: big PnL + target info (left) · Progress ring (right) */}
+            <div className="flex items-start gap-4">
               <div className="flex-1 min-w-0">
-                <div className={`text-[44px] font-black font-mono tabular-nums leading-none tracking-tight ${stats.totalPnl >= 0 ? "text-profit" : "text-loss"}`}>
-                  {stats.totalPnl >= 0 ? "+" : ""}{stats.totalPnl.toLocaleString()}
+                {/* Number halo */}
+                <div className="relative">
+                  <div
+                    className="absolute inset-0 blur-3xl opacity-40 -z-[1]"
+                    style={{
+                      background: `radial-gradient(closest-side, ${isProfit ? profitColor : lossColor}, transparent 70%)`,
+                    }}
+                  />
+                  <CountUp
+                    value={stats.totalPnl}
+                    className={`block text-[44px] font-black font-mono tabular-nums leading-none tracking-tight ${isProfit ? "text-profit" : "text-loss"}`}
+                  />
                 </div>
-                {hasTarget && (
-                  <p className="text-[11px] text-muted-foreground mt-2">
-                    目标 <span className="font-mono text-foreground/80">¥{target.toLocaleString()}</span>
-                    <span className="mx-1.5 opacity-30">·</span>
-                    {gap > 0
-                      ? <>还差 <span className={`font-mono font-semibold ${stats.totalPnl >= 0 ? "text-foreground" : "text-loss"}`}>¥{Math.abs(gap).toLocaleString()}</span></>
-                      : <span className="text-profit font-semibold">已达标 +¥{Math.abs(gap).toLocaleString()}</span>
-                    }
-                  </p>
+                {hasTarget ? (
+                  <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <Target size={11} strokeWidth={2} className="text-muted-foreground/70" />
+                    <span>
+                      目标 <span className="font-mono text-foreground/80">¥{target.toLocaleString()}</span>
+                      <span className="mx-1.5 opacity-30">·</span>
+                      {gap > 0
+                        ? <>还差 <span className={`font-mono font-semibold ${isProfit ? "text-foreground" : "text-loss"}`}>¥{Math.abs(gap).toLocaleString()}</span></>
+                        : <span className="text-profit font-semibold">已达标 +¥{Math.abs(gap).toLocaleString()}</span>
+                      }
+                    </span>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-[11px] text-muted-foreground/60">全部历史 · 无目标</p>
                 )}
               </div>
               {hasTarget && (
-                <ProgressRing percent={progress} size={72} color={profitColor} />
+                <ProgressRing percent={progress} size={68} color={profitColor} />
               )}
             </div>
 
-            {/* Stats row */}
-            <div className="flex items-center gap-4 mt-4 pt-3 border-t border-border/50">
-              <div className="flex-1">
-                <p className="text-[9px] text-muted-foreground uppercase tracking-wider">{rangeStatLabel}投注</p>
-                <p className="text-sm font-bold font-mono tabular-nums mt-0.5">
-                  {stats.totalBet > 0 ? `¥${(stats.totalBet / 1000).toFixed(0)}k` : "—"}
-                </p>
-              </div>
-              <div className="flex-1">
-                <p className="text-[9px] text-muted-foreground uppercase tracking-wider">ROI</p>
-                <p className={`text-sm font-bold font-mono tabular-nums mt-0.5 ${stats.roi >= 0 ? "text-profit" : "text-loss"}`}>
-                  {stats.totalBet > 0 ? `${stats.roi >= 0 ? "+" : ""}${stats.roi}%` : "—"}
-                </p>
-              </div>
-              <div className="flex-1">
-                <p className="text-[9px] text-muted-foreground uppercase tracking-wider">场次</p>
-                <p className="text-sm font-bold font-mono tabular-nums mt-0.5">{stats.count}</p>
-              </div>
+            {/* Stats row with icons */}
+            <div className="flex items-center gap-4 mt-4 pt-3 border-t border-white/[0.04]">
+              <StatCell
+                icon={<Activity size={11} strokeWidth={2} />}
+                label={`${rangeStatLabel}投注`}
+                value={stats.totalBet > 0 ? `¥${(stats.totalBet / 1000).toFixed(0)}k` : "—"}
+              />
+              <StatCell
+                icon={<TrendingUp size={11} strokeWidth={2} />}
+                label="ROI"
+                value={stats.totalBet > 0 ? `${stats.roi >= 0 ? "+" : ""}${stats.roi}%` : "—"}
+                valueCls={stats.roi >= 0 ? "text-profit" : "text-loss"}
+              />
+              <StatCell
+                label="场次"
+                value={String(stats.count)}
+              />
             </div>
           </div>
         </motion.div>
       </div>
 
-      {/* ── Yesterday Activity (conditional) ─────────────────── */}
+      {/* ── Yesterday Activity ─────────────────────────────────── */}
       {(yesterdayStats.bets > 0 || yesterdayStats.watches > 0) && (
-        <div className="px-4 pt-4">
+        <div className="px-4 pt-3">
           <motion.button
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.35, delay: 0.05, ease: "easeOut" }}
+            transition={{ duration: 0.35, delay: 0.08, ease: "easeOut" }}
             whileTap={{ scale: 0.98 }}
             onClick={() => router.push(`/records?date=${yesterdayKey}&view=week`)}
-            className="w-full text-left rounded-xl border border-border/60 bg-card/50 hover:bg-card transition-colors px-4 py-3 flex items-center gap-3"
+            className="w-full text-left rounded-xl border border-white/[0.05] bg-card/30 backdrop-blur-xl hover:bg-card/50 transition-colors px-4 py-3 flex items-center gap-3"
           >
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2">
                 <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">昨日动态</p>
                 <p className="text-[10px] text-muted-foreground/60 font-mono">
-                  {yesterday.getMonth() + 1}月{yesterday.getDate()}日
+                  {yesterdayDate.getMonth() + 1}月{yesterdayDate.getDate()}日
                 </p>
               </div>
               <div className="flex items-baseline gap-2 mt-1.5">
@@ -386,7 +419,7 @@ export default function HomePage() {
         <motion.div whileTap={{ scale: 0.98 }}>
           <Link
             href="/review"
-            className="flex items-center justify-center gap-2 w-full py-3.5 bg-foreground text-background rounded-xl font-bold text-sm active:opacity-80 transition-opacity"
+            className="flex items-center justify-center gap-2 w-full py-3.5 bg-foreground text-background rounded-xl font-bold text-sm active:opacity-80 transition-opacity shadow-lg shadow-black/20"
           >
             <Plus size={15} strokeWidth={3} />
             开始纪律审查
@@ -412,15 +445,15 @@ export default function HomePage() {
       <div className="px-4 space-y-0">
 
         {/* ── Recent Bets ──────────────────────────────────────────── */}
-        <div className="pt-4 pb-2 border-t border-border">
+        <div className="pt-4 pb-2 border-t border-border/60">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">最近下注</p>
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.18em]">RECENT BETS · 最近下注</p>
             <Link href="/records" className="text-[10px] text-muted-foreground underline underline-offset-2">全部</Link>
           </div>
           {recentBets.length === 0 ? (
             <p className="text-xs text-muted-foreground/50 py-3">暂无下注记录</p>
           ) : (
-            <div className="space-y-0 divide-y divide-border">
+            <div className="space-y-0 divide-y divide-border/50">
               {recentBets.map((r) => {
                 const pnl = getTotalPnl(r);
                 const outcome = r.result?.outcome;
@@ -472,15 +505,15 @@ export default function HomePage() {
         </div>
 
         {/* ── Recent Abandoned ─────────────────────────────────────── */}
-        <div className="border-t border-border pt-4 pb-6">
+        <div className="border-t border-border/60 pt-4 pb-6">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">最近观察</p>
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-[0.18em]">RECENT WATCH · 最近观察</p>
             <Link href="/records" className="text-[10px] text-muted-foreground underline underline-offset-2">全部</Link>
           </div>
           {recentAbandoned.length === 0 ? (
             <p className="text-xs text-muted-foreground/50 py-3">暂无观察记录</p>
           ) : (
-            <div className="space-y-0 divide-y divide-border">
+            <div className="space-y-0 divide-y divide-border/50">
               {recentAbandoned.map((a) => (
                 <button key={a.id} onClick={() => router.push(`/records?aid=${a.id}`)} className="w-full text-left">
                   <div className="flex items-center gap-3 py-3 first:pt-0 active:opacity-60 transition-opacity">
@@ -521,6 +554,27 @@ export default function HomePage() {
       </div>
 
       <BottomNav />
+    </div>
+  );
+}
+
+// ─── StatCell ─────────────────────────────────────────────────────────────────
+
+function StatCell({
+  icon, label, value, valueCls,
+}: {
+  icon?: React.ReactNode;
+  label: string;
+  value: string;
+  valueCls?: string;
+}) {
+  return (
+    <div className="flex-1 min-w-0">
+      <div className="flex items-center gap-1 text-[9px] text-muted-foreground uppercase tracking-wider">
+        {icon && <span className="text-muted-foreground/70">{icon}</span>}
+        <span>{label}</span>
+      </div>
+      <p className={`text-sm font-bold font-mono tabular-nums mt-0.5 ${valueCls ?? "text-foreground"}`}>{value}</p>
     </div>
   );
 }

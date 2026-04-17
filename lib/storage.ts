@@ -4,7 +4,7 @@ import type {
   UnifiedRecord,
   CompletionStatus,
 } from "./types";
-import { calcPnl, type AppSettings } from "./types";
+import { calcPnl, matchDayStart, matchDayKey, type AppSettings } from "./types";
 export type { AppSettings } from "./types";
 
 // ─── Keys ─────────────────────────────────────────────────────────────────────
@@ -180,15 +180,16 @@ function calcBetListStats(bets: import("./types").BetRecord[]) {
 }
 
 export function calcMonthStats(year: number, month: number) {
+  // Month boundary follows match-day (10am) — kickoff attributed by matchDayStart().
   const bets = getBetRecords().filter((r) => {
-    const d = new Date(r.kickoffTime);
-    return d.getFullYear() === year && d.getMonth() + 1 === month;
+    const a = matchDayStart(r.kickoffTime);
+    return a.getFullYear() === year && a.getMonth() + 1 === month;
   });
   return calcBetListStats(bets);
 }
 
 export function calcYearStats(year: number) {
-  const bets = getBetRecords().filter((r) => new Date(r.kickoffTime).getFullYear() === year);
+  const bets = getBetRecords().filter((r) => matchDayStart(r.kickoffTime).getFullYear() === year);
   return calcBetListStats(bets);
 }
 
@@ -202,12 +203,14 @@ export function calcAllTimeStats() {
 import { weekStart } from "./types";
 
 export function calcWeekStats(weekStartDate: Date) {
-  const start = weekStart(weekStartDate);
-  const end = new Date(start);
+  // Week bounds use match-day anchors: Monday 10:00 → next Monday 10:00
+  const ws = weekStart(weekStartDate);
+  ws.setHours(10, 0, 0, 0);
+  const end = new Date(ws);
   end.setDate(end.getDate() + 7);
   const bets = getBetRecords().filter((r) => {
-    const d = new Date(r.kickoffTime);
-    return d >= start && d < end;
+    const a = matchDayStart(r.kickoffTime);
+    return a >= ws && a < end;
   });
   return calcBetListStats(bets);
 }
@@ -215,16 +218,156 @@ export function calcWeekStats(weekStartDate: Date) {
 // ─── Daily counters ───────────────────────────────────────────────────────────
 
 export function countToday(): { bets: number; watches: number } {
-  const today = new Date();
-  const sameDay = (iso: string) => {
-    const d = new Date(iso);
-    return d.getFullYear() === today.getFullYear() &&
-           d.getMonth()    === today.getMonth() &&
-           d.getDate()     === today.getDate();
-  };
-  const bets = getBetRecords().filter((r) => sameDay(r.kickoffTime)).length;
-  const watches = getAbandonedRecords().filter((r) => sameDay(r.kickoffTime)).length;
+  // "Today" = current match-day (10am → next 10am boundary).
+  const todayKey = matchDayKey(new Date());
+  const bets = getBetRecords().filter((r) => matchDayKey(r.kickoffTime) === todayKey).length;
+  const watches = getAbandonedRecords().filter((r) => matchDayKey(r.kickoffTime) === todayKey).length;
   return { bets, watches };
+}
+
+// ─── Records analytics ────────────────────────────────────────────────────────
+// Scoped analytics for a given bet+watch list (already filtered by time range).
+
+export interface RecordsAnalytics {
+  winRate: number;              // % of settled bets that are win / half_win (push counts 0.5)
+  settledCount: number;
+  totalPnl: number;
+  totalBet: number;
+  roi: number;
+  disciplineScore: number;       // % of non-violation bets
+  violationCount: number;
+  streak: { type: "win" | "loss" | "none"; count: number };
+  handicapRoi: { label: string; bet: number; pnl: number; roi: number; count: number }[]; // top 5
+  errorTop: { err: string; count: number }[];
+  watchConversion: {
+    watchedThenAbandoned: { count: number; correct: number; rate: number };  // observed and stayed abandoned — rate = would-be-correct
+    watchedThenBet: { count: number; win: number; rate: number };             // observed then promoted to bet
+  };
+}
+
+export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord[]): RecordsAnalytics {
+  // Settled & pnl
+  let totalBet = 0;
+  let totalPnl = 0;
+  let settledCount = 0;
+  let wins = 0;
+  let halfWins = 0;
+  let pushes = 0;
+  let violations = 0;
+
+  for (const r of bets) {
+    if (r.isDisciplineViolation) violations++;
+    totalBet += r.bets.reduce((s, b) => s + b.amount, 0);
+    if (r.result) {
+      settledCount++;
+      totalPnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, r.result!.outcome), 0);
+      if (r.result.outcome === "win") wins++;
+      else if (r.result.outcome === "half_win") halfWins++;
+      else if (r.result.outcome === "push") pushes++;
+    }
+  }
+  const winRate = settledCount > 0
+    ? ((wins + halfWins * 0.5 + pushes * 0.5) / settledCount) * 100
+    : 0;
+  const roi = totalBet > 0 ? (totalPnl / totalBet) * 100 : 0;
+  const disciplineScore = bets.length > 0 ? ((bets.length - violations) / bets.length) * 100 : 100;
+
+  // Streak (latest consecutive win/loss across settled bets by kickoff time desc)
+  const settled = [...bets]
+    .filter((r) => !!r.result)
+    .sort((a, b) => new Date(b.kickoffTime).getTime() - new Date(a.kickoffTime).getTime());
+  let streak: RecordsAnalytics["streak"] = { type: "none", count: 0 };
+  if (settled.length > 0) {
+    const first = settled[0].result!.outcome;
+    const isWin = first === "win" || first === "half_win";
+    const isLoss = first === "loss" || first === "half_loss";
+    if (isWin || isLoss) {
+      const type = isWin ? "win" : "loss";
+      let count = 0;
+      for (const r of settled) {
+        const o = r.result!.outcome;
+        const match = type === "win"
+          ? (o === "win" || o === "half_win")
+          : (o === "loss" || o === "half_loss");
+        if (match) count++;
+        else break;
+      }
+      streak = { type, count };
+    }
+  }
+
+  // Handicap ROI — group by "主让0.5"/"客让0.75" label
+  const hcMap = new Map<string, { bet: number; pnl: number; count: number }>();
+  for (const r of bets) {
+    const label = `${r.handicapSide === "home" ? "主让" : "客让"}${r.handicapValue}`;
+    const amt = r.bets.reduce((s, b) => s + b.amount, 0);
+    const pnl = r.result ? r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, r.result!.outcome), 0) : 0;
+    const cur = hcMap.get(label) ?? { bet: 0, pnl: 0, count: 0 };
+    cur.bet += amt; cur.pnl += pnl; cur.count += 1;
+    hcMap.set(label, cur);
+  }
+  const handicapRoi = Array.from(hcMap.entries())
+    .map(([label, v]) => ({ label, ...v, roi: v.bet > 0 ? (v.pnl / v.bet) * 100 : 0 }))
+    .sort((a, b) => b.bet - a.bet)
+    .slice(0, 5);
+
+  // Error top
+  const errMap = new Map<string, number>();
+  for (const r of bets) {
+    if (!r.result?.errors) continue;
+    for (const e of r.result.errors) {
+      errMap.set(e, (errMap.get(e) ?? 0) + 1);
+    }
+  }
+  const errorTop = Array.from(errMap.entries())
+    .map(([err, count]) => ({ err, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5);
+
+  // Watch conversion
+  //  - watchedThenAbandoned: stayed in watch pool, reviewed (abandon_correct = would-be-correct)
+  //  - watchedThenBet: promoted, outcome win/half_win counts
+  let abandonReviewed = 0, abandonCorrect = 0;
+  for (const w of watches) {
+    if (w.promotedToBetId) continue;
+    if (w.reviewConclusion) {
+      abandonReviewed++;
+      if (w.reviewConclusion === "abandon_correct" || w.reviewConclusion === "no_regret") abandonCorrect++;
+    }
+  }
+  const promotedIds = new Set(watches.filter((w) => w.promotedToBetId).map((w) => w.promotedToBetId!));
+  let promotedSettled = 0, promotedWins = 0;
+  for (const r of bets) {
+    if (!promotedIds.has(r.id)) continue;
+    if (!r.result) continue;
+    promotedSettled++;
+    if (r.result.outcome === "win" || r.result.outcome === "half_win") promotedWins++;
+  }
+
+  return {
+    winRate,
+    settledCount,
+    totalPnl,
+    totalBet,
+    roi,
+    disciplineScore,
+    violationCount: violations,
+    streak,
+    handicapRoi,
+    errorTop,
+    watchConversion: {
+      watchedThenAbandoned: {
+        count: abandonReviewed,
+        correct: abandonCorrect,
+        rate: abandonReviewed > 0 ? (abandonCorrect / abandonReviewed) * 100 : 0,
+      },
+      watchedThenBet: {
+        count: promotedSettled,
+        win: promotedWins,
+        rate: promotedSettled > 0 ? (promotedWins / promotedSettled) * 100 : 0,
+      },
+    },
+  };
 }
 
 // ─── Promote watch → bet ──────────────────────────────────────────────────────

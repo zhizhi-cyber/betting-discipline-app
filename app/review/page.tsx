@@ -153,7 +153,6 @@ function ReviewInner() {
 
   // Match info
   const [matchName, setMatchName]   = useState("");
-  const [league, setLeague]         = useState("");
   const [homeTeam, setHomeTeam]     = useState("");
   const [awayTeam, setAwayTeam]     = useState("");
   const [kickoffTime, setKickoffTime] = useState("");
@@ -319,7 +318,7 @@ function ReviewInner() {
   };
 
   const resetAll = () => {
-    setMatchName(""); setLeague(""); setHomeTeam(""); setAwayTeam(""); setKickoffTime("");
+    setMatchName(""); setHomeTeam(""); setAwayTeam(""); setKickoffTime("");
     setHandicapSide(""); setHandicapValue(""); setBetType("pre");
     setBettingDirection(""); setOdds("0.97");
     setDeduction(emptyDeduction());
@@ -474,7 +473,7 @@ function ReviewInner() {
   const overLimitWatch = todayCount.watches >= settings.riskControls.maxDailyWatches;
 
   return (
-    <div className="min-h-screen bg-background pb-28">
+    <div className="min-h-screen pb-28">
       {/* Header */}
       <div className="sticky top-0 z-20 bg-background border-b border-border">
         <div className="flex items-center justify-between px-4 py-3">
@@ -519,10 +518,7 @@ function ReviewInner() {
         <section className="space-y-2">
           <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">比赛信息</p>
           <input value={matchName} onChange={(e) => setMatchName(e.target.value)}
-            placeholder="比赛标题（如：英超第8轮）"
-            className="w-full bg-muted rounded px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/40" />
-          <input value={league} onChange={(e) => setLeague(e.target.value)}
-            placeholder="联赛（可选）"
+            placeholder="比赛标题（如：英超第8轮 曼联 vs 切尔西）"
             className="w-full bg-muted rounded px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/40" />
           <div className="grid grid-cols-2 gap-2">
             <input value={homeTeam} onChange={(e) => setHomeTeam(e.target.value)}

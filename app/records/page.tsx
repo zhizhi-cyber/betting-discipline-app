@@ -14,20 +14,16 @@ import {
   type UnifiedRecord,
   calcPnl,
 } from "@/lib/mock-data";
-import { weekStart, weekEnd } from "@/lib/types";
+import { weekStart, weekEnd, matchDayKey, matchDayStart, formatMatchDayLabel } from "@/lib/types";
 import { getBetRecords, getAbandonedRecords, getSettings, saveSettings } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
+import AnalyticsPanel from "@/components/analytics-panel";
 import RecordDetail from "./[id]/RecordDetail";
 import AbandonedDetail from "../abandoned/[id]/AbandonedDetail";
 
 type ViewMode = "week" | "month" | "year";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmtDateGroup(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" });
-}
 
 function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
@@ -37,10 +33,11 @@ function fmtMd(d: Date) {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+// Group by match-day (10am → next 10am boundary)
 function groupByDate(items: UnifiedRecord[]): { date: string; dayKey: string; items: UnifiedRecord[] }[] {
   const map = new Map<string, UnifiedRecord[]>();
   for (const item of items) {
-    const key = item.kickoffTime.slice(0, 10);
+    const key = matchDayKey(item.kickoffTime);
     if (!map.has(key)) map.set(key, []);
     map.get(key)!.push(item);
   }
@@ -48,24 +45,28 @@ function groupByDate(items: UnifiedRecord[]): { date: string; dayKey: string; it
     .sort(([a], [b]) => b.localeCompare(a))
     .map(([dayKey, items]) => ({
       dayKey,
-      date: fmtDateGroup(items[0].kickoffTime),
+      date: formatMatchDayLabel(dayKey),
       items: items.sort((a, b) => b.kickoffTime.localeCompare(a.kickoffTime)),
     }));
 }
 
 function filterByMonth(items: UnifiedRecord[], year: number, month: number): UnifiedRecord[] {
+  // Month based on match-day attribution (10am boundary)
   return items.filter((r) => {
-    const d = new Date(r.kickoffTime);
-    return d.getFullYear() === year && d.getMonth() + 1 === month;
+    const a = matchDayStart(r.kickoffTime);
+    return a.getFullYear() === year && a.getMonth() + 1 === month;
   });
 }
 
 function filterByWeek(items: UnifiedRecord[], anchor: Date): UnifiedRecord[] {
-  const s = weekStart(anchor).getTime();
-  const e = weekEnd(anchor).getTime();
+  // Week window: Monday 10:00 → next Monday 10:00
+  const ws = weekStart(anchor);
+  ws.setHours(10, 0, 0, 0);
+  const end = new Date(ws);
+  end.setDate(end.getDate() + 7);
   return items.filter((r) => {
-    const t = new Date(r.kickoffTime).getTime();
-    return t >= s && t <= e;
+    const a = matchDayStart(r.kickoffTime);
+    return a >= ws && a < end;
   });
 }
 
@@ -398,7 +399,7 @@ function WeekView({
   const isCurrentWeek = weekStart(weekAnchor).getTime() === weekStart(new Date()).getTime();
 
   return (
-    <div className="min-h-screen bg-background pb-28">
+    <div className="min-h-screen pb-28">
       <div className="sticky top-0 z-20 bg-background border-b border-border">
         <div className="flex items-center gap-3 px-4 py-3">
           <Link href="/" className="text-muted-foreground"><ArrowLeft size={16} /></Link>
@@ -421,7 +422,8 @@ function WeekView({
         <StatsBar stats={stats} matchCount={weekBets.length} watchCount={weekWatches.length} pnlLabel="本周盈亏" />
       </div>
 
-      <div className="px-4 py-3">
+      <div className="px-4 py-3 space-y-4">
+        <AnalyticsPanel bets={weekBets} watches={weekWatches} />
         <GroupedList items={weekItems} highlightDate={highlightDate} />
       </div>
 
@@ -475,7 +477,7 @@ function YearView({
   const hasAnyData = yearBets.length > 0 || yearAbandoned.length > 0;
 
   return (
-    <div className="min-h-screen bg-background pb-28">
+    <div className="min-h-screen pb-28">
       <div className="sticky top-0 z-20 bg-background border-b border-border">
         <div className="flex items-center gap-3 px-4 py-3">
           <Link href="/" className="text-muted-foreground"><ArrowLeft size={16} /></Link>
@@ -500,7 +502,8 @@ function YearView({
         <StatsBar stats={yearStats} matchCount={yearBets.length} watchCount={yearAbandoned.length} pnlLabel="年度盈亏" />
       </div>
 
-      <div className="px-4 py-3">
+      <div className="px-4 py-3 space-y-4">
+        {hasAnyData && <AnalyticsPanel bets={yearBets} watches={yearAbandoned} />}
         {!hasAnyData ? (
           <div className="flex flex-col items-center justify-center py-16 gap-3">
             <p className="text-sm text-muted-foreground">{year}年暂无记录</p>
@@ -608,7 +611,7 @@ function MonthListView({
   const isCurrentMonth = (() => { const n = new Date(); return year === n.getFullYear() && month === n.getMonth() + 1; })();
 
   return (
-    <div className="min-h-screen bg-background pb-28">
+    <div className="min-h-screen pb-28">
       <div className="sticky top-0 z-20 bg-background border-b border-border">
         <div className="flex items-center gap-3 px-4 py-3">
           <Link href="/" className="text-muted-foreground"><ArrowLeft size={16} /></Link>
@@ -638,7 +641,8 @@ function MonthListView({
         </div>
       )}
 
-      <div className="px-4 py-3">
+      <div className="px-4 py-3 space-y-4">
+        <AnalyticsPanel bets={monthBets} watches={monthWatches} />
         <GroupedList items={monthItems} />
       </div>
 
