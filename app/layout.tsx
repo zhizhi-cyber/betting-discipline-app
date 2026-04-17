@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import BackgroundOrbs from "@/components/background-orbs";
+import ServiceWorkerRegister from "@/components/sw-register";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -35,6 +36,7 @@ export default function RootLayout({
           forcedTheme="dark"
           disableTransitionOnChange
         >
+          <ServiceWorkerRegister />
           <BackgroundOrbs />
           <div className="max-w-[430px] mx-auto min-h-screen relative z-10">
             {children}
