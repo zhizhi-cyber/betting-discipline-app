@@ -157,14 +157,23 @@ export default function HomePage() {
       pendingReviewCount: s.pendingReviewCount,
     });
 
-    const bets = getBetRecords().sort(
-      (a, b) => parseKickoff(b.kickoffTime).getTime() - parseKickoff(a.kickoffTime).getTime()
-    );
-    setRecentBets(bets.slice(0, 3));
-    const abandoned = getAbandonedRecords().sort(
-      (a, b) => parseKickoff(b.kickoffTime).getTime() - parseKickoff(a.kickoffTime).getTime()
-    );
-    setRecentAbandoned(abandoned.slice(0, 2));
+    // Recent = today + yesterday (match-day boundary 10:00)
+    const todayK = matchDayKey(new Date());
+    const yA = matchDayStart(new Date());
+    yA.setDate(yA.getDate() - 1);
+    const yKey = `${yA.getFullYear()}-${String(yA.getMonth() + 1).padStart(2, "0")}-${String(yA.getDate()).padStart(2, "0")}`;
+    const inRecent = (iso: string) => {
+      const k = matchDayKey(iso);
+      return k === todayK || k === yKey;
+    };
+    const bets = getBetRecords()
+      .filter((r) => inRecent(r.kickoffTime))
+      .sort((a, b) => parseKickoff(b.kickoffTime).getTime() - parseKickoff(a.kickoffTime).getTime());
+    setRecentBets(bets);
+    const abandoned = getAbandonedRecords()
+      .filter((r) => inRecent(r.kickoffTime))
+      .sort((a, b) => parseKickoff(b.kickoffTime).getTime() - parseKickoff(a.kickoffTime).getTime());
+    setRecentAbandoned(abandoned);
   }, [timeRange, mounted]);
 
   // Yesterday's activity — based on match-day boundary (10:00)
