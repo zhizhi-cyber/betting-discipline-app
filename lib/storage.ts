@@ -345,10 +345,14 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
     }
   }
 
-  // Handicap ROI — group by "主让0.5"/"客让0.75" label
+  // Handicap ROI — group by signed line from bettor's perspective:
+  // bet matches the side that gives the handicap → "-line" (took favorite)
+  // bet opposes that side                         → "+line" (took underdog)
   const hcMap = new Map<string, { bet: number; pnl: number; count: number }>();
   for (const r of bets) {
-    const label = `${r.handicapSide === "home" ? "主让" : "客让"}${r.handicapValue}`;
+    const hv = parseFloat(r.handicapValue);
+    const sign = r.bettingDirection === r.handicapSide ? "-" : "+";
+    const label = isNaN(hv) || hv === 0 ? "平手" : `${sign}${r.handicapValue}`;
     const amt = r.bets.reduce((s, b) => s + b.amount, 0);
     const pnl = r.result ? r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, r.result!.outcome), 0) : 0;
     const cur = hcMap.get(label) ?? { bet: 0, pnl: 0, count: 0 };

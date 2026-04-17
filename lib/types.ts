@@ -262,6 +262,25 @@ export function suggestedAmount(grade: Grade, amounts: GradeAmounts): number {
   return amounts[grade];
 }
 
+// Compact "team ±line" string for records list (no odds).
+// Shows the team the user actually bet on, with sign from their perspective.
+// betDirection === handicapSide → bet the favorite → "-line"
+// betDirection !== handicapSide → bet the underdog → "+line"
+export function formatBetDirection(params: {
+  homeTeam: string;
+  awayTeam: string;
+  bettingDirection: BettingDirection;
+  handicapSide: "home" | "away";
+  handicapValue: string;
+}): string {
+  const { homeTeam, awayTeam, bettingDirection, handicapSide, handicapValue } = params;
+  const team = bettingDirection === "home" ? (homeTeam || "主队") : (awayTeam || "客队");
+  const hv = parseFloat(handicapValue);
+  if (isNaN(hv) || hv === 0) return `${team} 平手`;
+  const sign = bettingDirection === handicapSide ? "-" : "+";
+  return `${team} ${sign}${handicapValue}`;
+}
+
 // Standard betting format: "曼联 +1.0 @0.97"
 export function formatBetPreview(params: {
   teamName: string;

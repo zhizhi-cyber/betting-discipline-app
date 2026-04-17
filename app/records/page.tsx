@@ -14,7 +14,7 @@ import {
   type UnifiedRecord,
   calcPnl,
 } from "@/lib/mock-data";
-import { weekStart, weekEnd, matchDayKey, matchDayStart, formatMatchDayLabel } from "@/lib/types";
+import { weekStart, weekEnd, matchDayKey, matchDayStart, formatMatchDayLabel, formatBetDirection } from "@/lib/types";
 import { getBetRecords, getAbandonedRecords, getSettings, saveSettings } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 import AnalyticsPanel from "@/components/analytics-panel";
@@ -143,10 +143,23 @@ function BetRow({ r }: { r: BetRecord }) {
               <span className="text-[9px] px-1 py-0.5 rounded bg-warning/15 text-warning shrink-0">违纪</span>
             )}
           </div>
+          {(r.homeTeam || r.awayTeam) && (
+            <p className="text-[11px] text-foreground/70 mt-0.5 truncate">
+              <span className="font-medium">{r.homeTeam || "主队"}</span>
+              <span className="mx-1 text-muted-foreground/50">vs</span>
+              <span className="font-medium">{r.awayTeam || "客队"}</span>
+            </p>
+          )}
           <p className="text-[10px] text-muted-foreground mt-0.5">
-            {r.bettingDirection === "home" ? "投主" : "投客"}
-            <span className="mx-1 opacity-30">·</span>
-            {r.handicapSide === "home" ? "主让" : "客让"}{r.handicapValue}
+            <span className="text-foreground/80 font-medium">
+              {formatBetDirection({
+                homeTeam: r.homeTeam,
+                awayTeam: r.awayTeam,
+                bettingDirection: r.bettingDirection,
+                handicapSide: r.handicapSide,
+                handicapValue: r.handicapValue,
+              })}
+            </span>
             <span className="mx-1 opacity-30">·</span>
             ¥{(betAmt / 1000).toFixed(0)}k
             <span className="mx-1 opacity-30">·</span>
@@ -205,10 +218,25 @@ function AbandonedRow({ a }: { a: AbandonedRecord }) {
               </span>
             )}
           </div>
+          {(a.homeTeam || a.awayTeam) && (
+            <p className="text-[11px] text-foreground/70 mt-0.5 truncate">
+              <span>{a.homeTeam || "主队"}</span>
+              <span className="mx-1 text-muted-foreground/50">vs</span>
+              <span>{a.awayTeam || "客队"}</span>
+            </p>
+          )}
           <p className="text-[10px] text-muted-foreground mt-0.5">
             观察
             <span className="mx-1 opacity-30">·</span>
-            {a.handicapSide === "home" ? "主让" : "客让"}{a.handicapValue}
+            <span className="text-foreground/80">
+              {formatBetDirection({
+                homeTeam: a.homeTeam,
+                awayTeam: a.awayTeam,
+                bettingDirection: a.bettingDirection,
+                handicapSide: a.handicapSide,
+                handicapValue: a.handicapValue,
+              })}
+            </span>
             <span className="mx-1 opacity-30">·</span>
             {a.totalScore}/10
             <span className="mx-1 opacity-30">·</span>
@@ -328,18 +356,13 @@ function StatsBar({ stats, matchCount, watchCount, pnlLabel }: {
   watchCount: number;
   pnlLabel: string;
 }) {
+  // ROI is shown in AnalyticsPanel below — keep this strip to 3 tiles
   return (
     <div className="flex items-center gap-0 divide-x divide-border border-t border-border">
       <div className="flex-1 px-3 py-2.5 text-center">
         <p className="text-[9px] text-muted-foreground uppercase tracking-wider">{pnlLabel}</p>
         <p className={`text-sm font-black font-mono mt-0.5 ${stats.totalPnl >= 0 ? "text-profit" : "text-loss"}`}>
           {stats.totalBet > 0 ? (stats.totalPnl >= 0 ? "+" : "") + stats.totalPnl.toLocaleString() : "—"}
-        </p>
-      </div>
-      <div className="flex-1 px-3 py-2.5 text-center">
-        <p className="text-[9px] text-muted-foreground uppercase tracking-wider">ROI</p>
-        <p className={`text-sm font-black font-mono mt-0.5 ${stats.roi >= 0 ? "text-profit" : "text-loss"}`}>
-          {stats.totalBet > 0 ? `${stats.roi >= 0 ? "+" : ""}${stats.roi.toFixed(1)}%` : "—"}
         </p>
       </div>
       <div className="flex-1 px-3 py-2.5 text-center">
