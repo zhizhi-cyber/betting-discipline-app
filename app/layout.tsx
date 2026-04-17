@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import BackgroundOrbs from "@/components/background-orbs";
@@ -14,6 +14,23 @@ export const metadata: Metadata = {
     statusBarStyle: "black-translucent",
     title: "大赢家",
   },
+  icons: {
+    icon: [
+      { url: "/betting-discipline-app/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/betting-discipline-app/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+    apple: [
+      { url: "/betting-discipline-app/icon-192.png", sizes: "192x192", type: "image/png" },
+      { url: "/betting-discipline-app/icon-512.png", sizes: "512x512", type: "image/png" },
+    ],
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0a0a0a",
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 const geistSans = Geist({

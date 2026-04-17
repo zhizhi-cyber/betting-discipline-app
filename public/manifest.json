@@ -4,6 +4,7 @@
   "description": "足球亚盘投注纪律追踪",
   "start_url": "/betting-discipline-app/",
   "scope": "/betting-discipline-app/",
+  "id": "/betting-discipline-app/",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#0a0a0a",
@@ -14,6 +15,18 @@
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
+    },
+    {
+      "src": "/betting-discipline-app/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/betting-discipline-app/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
     },
     {
       "src": "/betting-discipline-app/icon-512.png",
