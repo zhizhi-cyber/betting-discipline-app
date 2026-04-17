@@ -164,7 +164,7 @@ export default function SettingsPage() {
           <div className="border border-border rounded-md overflow-hidden divide-y divide-border">
             <div className="px-4 py-3 bg-card flex items-center justify-between">
               <span className="text-xs text-muted-foreground">产品名称</span>
-              <span className="text-xs font-semibold">纪律盘</span>
+              <span className="text-xs font-semibold">大赢家</span>
             </div>
             <div className="px-4 py-3 bg-card flex items-center justify-between">
               <span className="text-xs text-muted-foreground">覆盖范围</span>

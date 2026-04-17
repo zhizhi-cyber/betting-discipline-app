@@ -262,7 +262,7 @@ export default function HomePage() {
 
       {/* ── Header ──────────────────────────────────────────────── */}
       <div className="flex items-center justify-between px-4 pt-6 pb-3">
-        <p className="text-[11px] text-muted-foreground uppercase tracking-[0.2em]">纪律盘 · 足球亚盘</p>
+        <p className="text-[11px] text-muted-foreground uppercase tracking-[0.2em]">大赢家 · 足球亚盘</p>
         <Link href="/settings" className="text-muted-foreground p-1 -mr-1">
           <Settings size={16} strokeWidth={1.5} />
         </Link>

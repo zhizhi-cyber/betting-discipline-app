@@ -5,13 +5,13 @@ import BackgroundOrbs from "@/components/background-orbs";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "纪律盘",
+  title: "大赢家",
   description: "足球亚盘让球纪律审查工具",
   manifest: "/betting-discipline-app/manifest.json",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "纪律盘",
+    title: "大赢家",
   },
 };
 

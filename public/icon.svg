@@ -1,4 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="100" fill="#1a1a1a"/>
-  <text x="256" y="340" font-size="280" text-anchor="middle" font-family="Apple Color Emoji, Segoe UI Emoji, sans-serif">💰</text>
+  <rect width="512" height="512" rx="100" fill="#000000"/>
+  <!-- Money bag -->
+  <g>
+    <!-- Bag neck / tie -->
+    <path d="M178 118 L178 132 L150 168 L362 168 L334 132 L334 118 Z" fill="#f5b800"/>
+    <rect x="150" y="168" width="212" height="26" fill="#f5b800"/>
+    <!-- Bag body -->
+    <path d="M150 194
+             C 110 230, 92 290, 92 340
+             C 92 400, 140 436, 200 436
+             L 312 436
+             C 372 436, 420 400, 420 340
+             C 420 290, 402 230, 362 194 Z" fill="#f5b800"/>
+    <!-- Dollar sign cutout -->
+    <text x="256" y="368" font-size="200" font-weight="900" text-anchor="middle"
+          font-family="Arial Black, Helvetica, sans-serif" fill="#000000">$</text>
+  </g>
+  <!-- Lightning bolt overlapping bottom-right -->
+  <path d="M360 210 L430 210 L388 304 L430 304 L330 452 L366 348 L320 348 Z"
+        fill="#f5b800" stroke="#000000" stroke-width="14" stroke-linejoin="round"/>
 </svg>
