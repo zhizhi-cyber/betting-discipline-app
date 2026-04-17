@@ -4,8 +4,8 @@ import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronUp, Trash2, Star, Pencil } from "lucide-react";
-import type { ReviewConclusion, AbandonedRecord, AnalysisVerdict, ScoreData, BetRecord } from "@/lib/types";
-import { SUBDIMS, formatBetPreview } from "@/lib/types";
+import type { ReviewConclusion, AbandonedRecord, AnalysisVerdict, ScoreData, BetRecord, SidedHandicap } from "@/lib/types";
+import { SUBDIMS, formatBetPreview, formatSidedHandicap } from "@/lib/types";
 import { getAbandonedRecords, saveAbandonedRecord, deleteAbandonedRecord, promoteWatchToBet, getSettings, countToday } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
@@ -33,7 +33,7 @@ const CONCLUSIONS: { key: ReviewConclusion; label: string; desc: string; color: 
 
 const VERDICT_OPTIONS: { key: AnalysisVerdict; label: string; cls: string }[] = [
   { key: "accurate", label: "事后印证：准",   cls: "bg-profit text-white" },
-  { key: "passable", label: "事后印证：勉强", cls: "bg-muted-foreground text-white" },
+  { key: "passable", label: "事后印证:勉强", cls: "bg-muted-foreground text-white" },
   { key: "off",      label: "事后印证：偏",   cls: "bg-loss text-white" },
 ];
 
@@ -66,6 +66,8 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
   const [conclusion, setConclusion] = useState<ReviewConclusion | "">("");
   const [reviewNote, setReviewNote] = useState("");
   const [analysisVerdict, setAnalysisVerdict] = useState<AnalysisVerdict | null>(null);
+  const [scoreHome, setScoreHome] = useState<string>("");
+  const [scoreAway, setScoreAway] = useState<string>("");
 
   const settings = useMemo(() => getSettings(), []);
   const today = useMemo(() => countToday(), []);
@@ -76,6 +78,8 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
       setConclusion(record.reviewConclusion ?? "");
       setReviewNote(record.reviewNote ?? "");
       setAnalysisVerdict(record.analysisVerdict ?? null);
+      setScoreHome(record.finalScore?.home != null ? String(record.finalScore.home) : "");
+      setScoreAway(record.finalScore?.away != null ? String(record.finalScore.away) : "");
     }
   }, [record]);
 
@@ -110,6 +114,7 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
 
   const alreadyPromoted = !!record.promotedToBetId;
   const overBetLimit = today.bets >= settings.riskControls.maxDailyMatches;
+  const finalScore = record.finalScore;
 
   const handlePromote = () => {
     if (!record) return;
@@ -208,7 +213,7 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
             {overBetLimit && (
               <p className="text-[11px] text-loss">⚠ 今日下注已达上限 {today.bets}/{settings.riskControls.maxDailyMatches}，仍要补录？</p>
             )}
-            <p className="text-[10px] text-muted-foreground">补录为下注会标记为"违纪单"，提醒你这次绕过了观察纪律。</p>
+            <p className="text-[10px] text-muted-foreground">补录为下注会标记为&ldquo;违纪单&rdquo;，提醒你这次绕过了观察纪律。</p>
             <button onClick={handlePromote}
               className="w-full py-3 rounded font-bold text-sm bg-foreground text-background">
               确认补录为下注
@@ -223,6 +228,12 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
         <div className="border-b border-border pb-4">
           <p className="text-base font-bold">{record.match}</p>
           <p className="text-sm text-muted-foreground mt-0.5">{record.homeTeam} vs {record.awayTeam}</p>
+          {finalScore && (
+            <p className="text-sm font-mono text-foreground mt-1">
+              <span className="text-muted-foreground">比分</span>
+              <span className="mx-2 font-bold tabular-nums">{finalScore.home} : {finalScore.away}</span>
+            </p>
+          )}
           <div className="mt-2 rounded-md bg-muted px-3 py-2 inline-block">
             <p className="text-sm font-bold font-mono">{heroPreview}</p>
           </div>
@@ -257,15 +268,9 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
             </button>
             {deductionExpanded && (
               <div className="px-4 pb-4 pt-2 border-t border-border space-y-3">
-                {record.deduction.fairRanges.values.length > 0 && (
-                  <SidedHandicapView label="合理让球区间" data={record.deduction.fairRanges} />
-                )}
-                {record.deduction.homeWinBookieExpected.values.length > 0 && (
-                  <SidedHandicapView label="主队胜 · 庄家应开盘口" data={record.deduction.homeWinBookieExpected} />
-                )}
-                {record.deduction.awayWinBookieExpected.values.length > 0 && (
-                  <SidedHandicapView label="客队胜 · 庄家应开盘口" data={record.deduction.awayWinBookieExpected} />
-                )}
+                <SidedHandicapView label="合理让球区间" data={record.deduction.fairRanges} homeTeam={record.homeTeam} awayTeam={record.awayTeam} />
+                <SidedHandicapView label="主队胜 · 庄家应开盘口" data={record.deduction.homeWinBookieExpected} homeTeam={record.homeTeam} awayTeam={record.awayTeam} />
+                <SidedHandicapView label="客队胜 · 庄家应开盘口" data={record.deduction.awayWinBookieExpected} homeTeam={record.homeTeam} awayTeam={record.awayTeam} />
                 {record.deduction.confidence > 0 && (
                   <div className="flex items-center gap-2">
                     <p className="text-[10px] text-muted-foreground">推演信心度</p>
@@ -337,6 +342,29 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
           )}
         </div>
 
+        {/* Final score input */}
+        <div className="rounded-md border border-border bg-card p-3">
+          <p className="text-[11px] font-bold text-foreground mb-2">最终比分</p>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-muted-foreground w-14 truncate">{record.homeTeam}</span>
+            <input
+              type="number" min={0} inputMode="numeric"
+              value={scoreHome}
+              onChange={(e) => setScoreHome(e.target.value)}
+              className="w-12 bg-muted rounded px-2 py-1.5 text-sm font-mono tabular-nums text-center outline-none"
+            />
+            <span className="text-muted-foreground font-bold">:</span>
+            <input
+              type="number" min={0} inputMode="numeric"
+              value={scoreAway}
+              onChange={(e) => setScoreAway(e.target.value)}
+              className="w-12 bg-muted rounded px-2 py-1.5 text-sm font-mono tabular-nums text-center outline-none"
+            />
+            <span className="text-[10px] text-muted-foreground w-14 truncate">{record.awayTeam}</span>
+            <span className="text-[10px] text-muted-foreground/50 ml-auto">可选</span>
+          </div>
+        </div>
+
         <div>
           <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">观察期赛果</p>
           <div className="flex gap-1.5">
@@ -400,12 +428,19 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
             disabled={!conclusion}
             onClick={() => {
               if (!conclusion || !record) return;
+              const parsedHome = scoreHome === "" ? undefined : parseInt(scoreHome, 10);
+              const parsedAway = scoreAway === "" ? undefined : parseInt(scoreAway, 10);
+              const finalScore = (parsedHome !== undefined && !isNaN(parsedHome) &&
+                                  parsedAway !== undefined && !isNaN(parsedAway))
+                ? { home: parsedHome, away: parsedAway }
+                : undefined;
               const updated: AbandonedRecord = {
                 ...record,
                 actualResult: (actualResult || undefined) as AbandonedRecord["actualResult"],
                 reviewConclusion: conclusion,
                 reviewNote,
                 analysisVerdict: analysisVerdict ?? undefined,
+                finalScore,
                 completionStatus: "complete",
               };
               saveAbandonedRecord(updated);
@@ -435,23 +470,20 @@ function Chip({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SidedHandicapView({ label, data }: {
+function SidedHandicapView({
+  label, data, homeTeam, awayTeam,
+}: {
   label: string;
-  data: { side: "home" | "away" | ""; values: string[] };
+  data: SidedHandicap;
+  homeTeam: string;
+  awayTeam: string;
 }) {
+  const text = formatSidedHandicap(data, homeTeam, awayTeam);
+  if (!text) return null;
   return (
-    <div>
-      <p className="text-[10px] text-muted-foreground mb-1.5">{label}</p>
-      <div className="flex flex-wrap gap-1">
-        {data.side && (
-          <span className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground">
-            {data.side === "home" ? "主让" : "客让"}
-          </span>
-        )}
-        {data.values.map((v) => (
-          <span key={v} className="text-[10px] px-2 py-0.5 rounded bg-muted font-mono text-muted-foreground">{v}</span>
-        ))}
-      </div>
+    <div className="flex items-baseline gap-2">
+      <p className="text-[10px] text-muted-foreground shrink-0">{label}</p>
+      <p className="text-[12px] font-mono font-semibold text-foreground flex-1">{text}</p>
     </div>
   );
 }

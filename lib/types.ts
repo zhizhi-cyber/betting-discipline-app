@@ -117,6 +117,11 @@ export interface BetSlip {
 
 // ─── Bet Record ───────────────────────────────────────────────────────────────
 
+export interface FinalScore {
+  home: number;
+  away: number;
+}
+
 export interface BetRecord {
   id: string;
   type: "bet";
@@ -139,6 +144,9 @@ export interface BetRecord {
     errors: string[];
     reviewNote: string;
     analysisVerdict?: AnalysisVerdict;  // 事后印证 rating on personal analysis
+    finalScore?: FinalScore;            // 最终比分 (主:客)
+    positiveNotes?: string[];           // 亮点/做得好
+    decisionRating?: number;            // 1-5 本场决策总评
   };
   completionStatus: CompletionStatus;
   createdAt: string;
@@ -165,6 +173,7 @@ export interface AbandonedRecord {
   reviewConclusion?: ReviewConclusion;
   reviewNote?: string;
   analysisVerdict?: AnalysisVerdict;
+  finalScore?: FinalScore;        // 最终比分 (观察对不对的参考)
   completionStatus: CompletionStatus;
   createdAt: string;
   promotedToBetId?: string;       // if later converted to bet
@@ -269,6 +278,51 @@ export function formatBetPreview(params: {
   const sign = bettingDirection === handicapSide ? "-" : "+";
   return `${teamName} ${sign}${hv} @${odds}`;
 }
+
+// Compact "曼联 +0.5 / +0.75 / +1" format for deduction display.
+// side = 让球方 (the team that gives the ball handicap).
+// Uses "+" sign to read naturally ("曼联 gives +1"). Team name appears once.
+// Returns "" if team+values not both present (point 4: must select both to display).
+export function formatSidedHandicap(
+  sided: SidedHandicap,
+  homeTeam: string,
+  awayTeam: string,
+): string {
+  if (!sided.side || sided.values.length === 0) return "";
+  const team = sided.side === "home" ? (homeTeam || "主队") : (awayTeam || "客队");
+  const parts = sided.values.map((v) => {
+    const n = parseFloat(v);
+    if (isNaN(n) || n === 0) return "0";
+    return `+${v}`;
+  });
+  return `${team} ${parts.join(" / ")}`;
+}
+
+// Whether a SidedHandicap has both a side and at least one value selected.
+export function isSidedHandicapComplete(sided: SidedHandicap): boolean {
+  return !!sided.side && sided.values.length > 0;
+}
+
+// ─── Review option constants (post-match feedback) ────────────────────────────
+// 6 symmetric error / positive items, paired by dimension.
+
+export const ERROR_OPTIONS: string[] = [
+  "基本面误判",
+  "赔率/盘口理解错误",
+  "庄家立场判断错误",
+  "情绪下注/追单",
+  "不该下却下了",
+  "应转观察却下了",
+];
+
+export const POSITIVE_OPTIONS: string[] = [
+  "基本面判断准确",
+  "赔率/盘口解读到位",
+  "看清了庄家立场",
+  "情绪控制到位",
+  "该下就下，果断",
+  "该转观察果断转了",
+];
 
 // Count signals A=home, B=away, C=balanced across sidedMapping subdims
 export function countSignals(scores: ScoreData): { home: number; away: number; balanced: number; total: number } {

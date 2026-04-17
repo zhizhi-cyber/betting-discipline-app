@@ -116,6 +116,7 @@ function BetRow({ r }: { r: BetRecord }) {
   const pnl = getTotalPnl(r);
   const outcome = r.result?.outcome;
   const betAmt = getTotalBetAmount(r);
+  const finalScore = r.result?.finalScore;
 
   const leftBorder =
     r.isDisciplineViolation ? "border-l-warning" :
@@ -132,6 +133,11 @@ function BetRow({ r }: { r: BetRecord }) {
           <div className="flex items-center gap-1.5">
             <span className={`text-[10px] font-black shrink-0 ${GRADE_COLORS[r.grade]}`}>{r.grade}</span>
             <p className="text-xs font-semibold truncate">{r.match}</p>
+            {finalScore && (
+              <span className="text-[10px] font-mono tabular-nums text-foreground/80 shrink-0 bg-muted px-1.5 py-0.5 rounded">
+                {finalScore.home}:{finalScore.away}
+              </span>
+            )}
             {r.isDisciplineViolation && (
               <span className="text-[9px] px-1 py-0.5 rounded bg-warning/15 text-warning shrink-0">违纪</span>
             )}
@@ -152,13 +158,20 @@ function BetRow({ r }: { r: BetRecord }) {
               ))}
             </div>
           )}
+          {r.result?.positiveNotes && r.result.positiveNotes.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-1">
+              {r.result.positiveNotes.slice(0, 3).map((p) => (
+                <span key={p} className="text-[9px] px-1.5 py-0.5 rounded bg-profit/10 text-profit border border-profit/20">{p}</span>
+              ))}
+            </div>
+          )}
         </div>
         <div className="text-right shrink-0 min-w-[48px]">
           {outcome ? (
             <>
               <p className="text-[10px] text-muted-foreground">{OUTCOME_LABELS[outcome]}</p>
               {pnl !== null && (
-                <p className={`text-sm font-black font-mono mt-0.5 ${pnl > 0 ? "text-profit" : pnl < 0 ? "text-loss" : "text-neutral"}`}>
+                <p className={`text-sm font-black font-mono tabular-nums mt-0.5 ${pnl > 0 ? "text-profit" : pnl < 0 ? "text-loss" : "text-neutral"}`}>
                   {pnl > 0 ? "+" : ""}{pnl === 0 ? "±0" : pnl.toLocaleString()}
                 </p>
               )}
@@ -183,7 +196,14 @@ function AbandonedRow({ a }: { a: AbandonedRecord }) {
       <div className="flex items-center gap-3 px-3 py-2.5 bg-card/60 active:opacity-60 transition-opacity border-l-2 border-l-muted rounded-sm">
         <CompletionDot status={a.completionStatus} />
         <div className="flex-1 min-w-0 opacity-55">
-          <p className="text-xs truncate">{a.match}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs truncate">{a.match}</p>
+            {a.finalScore && (
+              <span className="text-[10px] font-mono tabular-nums text-foreground/80 shrink-0 bg-muted px-1.5 py-0.5 rounded">
+                {a.finalScore.home}:{a.finalScore.away}
+              </span>
+            )}
+          </div>
           <p className="text-[10px] text-muted-foreground mt-0.5">
             观察
             <span className="mx-1 opacity-30">·</span>
@@ -236,8 +256,17 @@ function ViewToggle({ viewMode, setViewMode }: { viewMode: ViewMode; setViewMode
 
 // ─── Groups renderer (shared) ─────────────────────────────────────────────────
 
-function GroupedList({ items }: { items: UnifiedRecord[] }) {
+function GroupedList({ items, highlightDate }: { items: UnifiedRecord[]; highlightDate?: string }) {
   const groups = useMemo(() => groupByDate(items), [items]);
+
+  // Scroll to highlighted date section on mount
+  useEffect(() => {
+    if (!highlightDate) return;
+    const el = document.querySelector(`[data-day-key="${highlightDate}"]`);
+    if (el) {
+      (el as HTMLElement).scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [highlightDate, groups]);
 
   if (groups.length === 0) {
     return (
@@ -256,12 +285,24 @@ function GroupedList({ items }: { items: UnifiedRecord[] }) {
           return s + pnl;
         }, 0);
         const hasPnl = dayBets.length > 0;
+        const isHighlighted = highlightDate === dayKey;
+        const betCount = items.filter((r) => r.type === "bet").length;
+        const watchCount = items.filter((r) => r.type === "abandoned").length;
         return (
-          <div key={dayKey}>
+          <div key={dayKey} data-day-key={dayKey}
+            className={isHighlighted ? "rounded-md ring-2 ring-foreground/20 bg-foreground/[0.02] p-2 -m-2" : ""}
+          >
             <div className="flex items-center justify-between mb-2">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-widest">{date}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-[11px] font-bold text-foreground uppercase tracking-wider">{date}</p>
+                <span className="text-[10px] text-muted-foreground/60">
+                  {betCount > 0 && `${betCount}下注`}
+                  {betCount > 0 && watchCount > 0 && " · "}
+                  {watchCount > 0 && `${watchCount}观察`}
+                </span>
+              </div>
               {hasPnl && (
-                <p className={`text-[10px] font-bold font-mono ${dayPnl >= 0 ? "text-profit" : "text-loss"}`}>
+                <p className={`text-[11px] font-black font-mono tabular-nums ${dayPnl >= 0 ? "text-profit" : "text-loss"}`}>
                   {dayPnl >= 0 ? "+" : ""}{dayPnl.toLocaleString()}
                 </p>
               )}
@@ -321,6 +362,7 @@ function WeekView({
   setViewMode,
   allBetRecords,
   allAbandonedRecords,
+  highlightDate,
 }: {
   weekAnchor: Date;
   setWeekAnchor: (d: Date) => void;
@@ -328,6 +370,7 @@ function WeekView({
   setViewMode: (v: ViewMode) => void;
   allBetRecords: BetRecord[];
   allAbandonedRecords: AbandonedRecord[];
+  highlightDate?: string;
 }) {
   const allUnified: UnifiedRecord[] = useMemo(
     () => [...allBetRecords, ...allAbandonedRecords],
@@ -379,7 +422,7 @@ function WeekView({
       </div>
 
       <div className="px-4 py-3">
-        <GroupedList items={weekItems} />
+        <GroupedList items={weekItems} highlightDate={highlightDate} />
       </div>
 
       <BottomNav />
@@ -611,15 +654,28 @@ function RecordsInner() {
   const router = useRouter();
   const betId = searchParams.get("id");
   const abanId = searchParams.get("aid");
+  const dateParam = searchParams.get("date");  // YYYY-MM-DD, from home "yesterday activity"
 
   const [viewMode, setViewModeState] = useState<ViewMode>("month");
   const [viewLoaded, setViewLoaded] = useState(false);
+
+  const now = new Date();
+  const [year, setYear] = useState(now.getFullYear());
+  const [month, setMonth] = useState(now.getMonth() + 1);
+  const [weekAnchor, setWeekAnchor] = useState<Date>(now);
+  const [allBetRecords, setAllBetRecords] = useState<BetRecord[]>([]);
+  const [allAbandonedRecords, setAllAbandonedRecords] = useState<AbandonedRecord[]>([]);
 
   useEffect(() => {
     const s = getSettings();
     const persisted = s.displayPrefs.recordsView;
     const urlView = searchParams.get("view");
-    if (urlView === "week" || urlView === "month" || urlView === "year") {
+    // Priority: ?date= forces week view; else ?view= override; else persisted
+    if (dateParam) {
+      setViewModeState("week");
+      const d = new Date(dateParam + "T12:00:00");
+      if (!isNaN(d.getTime())) setWeekAnchor(d);
+    } else if (urlView === "week" || urlView === "month" || urlView === "year") {
       setViewModeState(urlView);
     } else if (persisted) {
       setViewModeState(persisted);
@@ -634,13 +690,6 @@ function RecordsInner() {
     saveSettings({ ...s, displayPrefs: { ...s.displayPrefs, recordsView: v } });
     router.replace(`/records?view=${v}`);
   };
-
-  const now = new Date();
-  const [year, setYear] = useState(now.getFullYear());
-  const [month, setMonth] = useState(now.getMonth() + 1);
-  const [weekAnchor, setWeekAnchor] = useState<Date>(now);
-  const [allBetRecords, setAllBetRecords] = useState<BetRecord[]>([]);
-  const [allAbandonedRecords, setAllAbandonedRecords] = useState<AbandonedRecord[]>([]);
 
   useEffect(() => {
     setAllBetRecords(getBetRecords());
@@ -660,6 +709,7 @@ function RecordsInner() {
         setViewMode={setViewMode}
         allBetRecords={allBetRecords}
         allAbandonedRecords={allAbandonedRecords}
+        highlightDate={dateParam ?? undefined}
       />
     );
   }

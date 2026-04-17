@@ -4,8 +4,8 @@ import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronUp, Trash2, Star, Pencil } from "lucide-react";
-import type { Outcome, BetRecord, AnalysisVerdict, ScoreData } from "@/lib/types";
-import { calcPnl, getTotalBetAmount, SUBDIMS, formatBetPreview } from "@/lib/types";
+import type { Outcome, BetRecord, AnalysisVerdict, ScoreData, SidedHandicap } from "@/lib/types";
+import { calcPnl, getTotalBetAmount, SUBDIMS, formatBetPreview, formatSidedHandicap, ERROR_OPTIONS, POSITIVE_OPTIONS } from "@/lib/types";
 import { getBetRecords, saveBetRecord, deleteBetRecord } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
@@ -29,15 +29,6 @@ const SCORE_LABELS: Record<string, string> = {
   trap:        "诱盘/抽水",
   bookie:      "庄家立场",
 };
-
-const ALL_ERROR_OPTIONS = [
-  "基本面误判",
-  "赔率/盘口理解错误",
-  "庄家立场判断错误",
-  "情绪下注/追单",
-  "不该下却下了",
-  "应转观察却下了",
-];
 
 const VERDICT_OPTIONS: { key: AnalysisVerdict; label: string; cls: string }[] = [
   { key: "accurate", label: "事后印证：准",   cls: "bg-profit text-white" },
@@ -65,31 +56,30 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
 
   const { show: showToast, node: toastNode } = useToast();
 
-  const autoErrors = useMemo(() => {
-    if (!record) return [];
-    const auto: string[] = [];
-    if (record.scores.fundamental.score === 0) auto.push("基本面误判");
-    if (record.scores.odds.score === 0) auto.push("赔率/盘口理解错误");
-    if (record.scores.bookie.score === 0) auto.push("庄家立场判断错误");
-    if (record.scores.trap.score === 0 && !auto.includes("不该下却下了")) auto.push("不该下却下了");
-    return auto;
-  }, [record]);
-
   const [scoresExpanded, setScoresExpanded] = useState(false);
   const [deductionExpanded, setDeductionExpanded] = useState(true);
   const [selectedOutcome, setSelectedOutcome] = useState<Outcome | null>(null);
   const [checkedErrors, setCheckedErrors] = useState<string[]>([]);
+  const [checkedPositives, setCheckedPositives] = useState<string[]>([]);
+  const [decisionRating, setDecisionRating] = useState<number>(0);
   const [reviewNote, setReviewNote] = useState("");
   const [analysisVerdict, setAnalysisVerdict] = useState<AnalysisVerdict | null>(null);
+  const [scoreHome, setScoreHome] = useState<string>("");
+  const [scoreAway, setScoreAway] = useState<string>("");
 
   useEffect(() => {
     if (record) {
       setSelectedOutcome(record.result?.outcome ?? null);
-      setCheckedErrors(record.result?.errors?.length ? record.result.errors : autoErrors);
+      // No auto-preselect: empty unless previously saved
+      setCheckedErrors(record.result?.errors ?? []);
+      setCheckedPositives(record.result?.positiveNotes ?? []);
+      setDecisionRating(record.result?.decisionRating ?? 0);
       setReviewNote(record.result?.reviewNote ?? "");
       setAnalysisVerdict(record.result?.analysisVerdict ?? null);
+      setScoreHome(record.result?.finalScore?.home != null ? String(record.result.finalScore.home) : "");
+      setScoreAway(record.result?.finalScore?.away != null ? String(record.result.finalScore.away) : "");
     }
-  }, [record, autoErrors]);
+  }, [record]);
 
   const totalPnl = useMemo(() => {
     if (!selectedOutcome || !record) return null;
@@ -100,6 +90,9 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
 
   const toggleError = (err: string) =>
     setCheckedErrors((prev) => prev.includes(err) ? prev.filter((e) => e !== err) : [...prev, err]);
+
+  const togglePositive = (note: string) =>
+    setCheckedPositives((prev) => prev.includes(note) ? prev.filter((n) => n !== note) : [...prev, note]);
 
   if (!record) {
     return (
@@ -127,6 +120,8 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
      record.deduction.awayWinBookieExpected.values.length > 0 ||
      record.deduction.personalAnalysis ||
      record.deduction.confidence > 0);
+
+  const finalScore = record.result?.finalScore;
 
   return (
     <div className="min-h-screen bg-background pb-28">
@@ -178,6 +173,12 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
           <p className="text-sm text-muted-foreground mt-0.5">
             {record.homeTeam} vs {record.awayTeam}
           </p>
+          {finalScore && (
+            <p className="text-sm font-mono text-foreground mt-1">
+              <span className="text-muted-foreground">比分</span>
+              <span className="mx-2 font-bold tabular-nums">{finalScore.home} : {finalScore.away}</span>
+            </p>
+          )}
           {preview && (
             <div className="mt-2 rounded-md bg-muted px-3 py-2 inline-block">
               <p className="text-sm font-bold font-mono">{preview}</p>
@@ -190,7 +191,7 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
           </div>
 
           {totalPnl !== null && (
-            <div className={`mt-4 text-4xl font-black font-mono ${totalPnl > 0 ? "text-profit" : totalPnl < 0 ? "text-loss" : "text-neutral"}`}>
+            <div className={`mt-4 text-4xl font-black font-mono tabular-nums ${totalPnl > 0 ? "text-profit" : totalPnl < 0 ? "text-loss" : "text-neutral"}`}>
               {totalPnl > 0 ? "+" : ""}{totalPnl === 0 ? "±0" : totalPnl.toLocaleString()}
             </div>
           )}
@@ -213,15 +214,9 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
             </button>
             {deductionExpanded && (
               <div className="px-4 pb-4 pt-2 border-t border-border space-y-3">
-                {record.deduction.fairRanges.values.length > 0 && (
-                  <SidedHandicapView label="合理让球区间" data={record.deduction.fairRanges} />
-                )}
-                {record.deduction.homeWinBookieExpected.values.length > 0 && (
-                  <SidedHandicapView label="主队胜 · 庄家应开盘口" data={record.deduction.homeWinBookieExpected} />
-                )}
-                {record.deduction.awayWinBookieExpected.values.length > 0 && (
-                  <SidedHandicapView label="客队胜 · 庄家应开盘口" data={record.deduction.awayWinBookieExpected} />
-                )}
+                <SidedHandicapView label="合理让球区间" data={record.deduction.fairRanges} homeTeam={record.homeTeam} awayTeam={record.awayTeam} />
+                <SidedHandicapView label="主队胜 · 庄家应开盘口" data={record.deduction.homeWinBookieExpected} homeTeam={record.homeTeam} awayTeam={record.awayTeam} />
+                <SidedHandicapView label="客队胜 · 庄家应开盘口" data={record.deduction.awayWinBookieExpected} homeTeam={record.homeTeam} awayTeam={record.awayTeam} />
                 {record.deduction.confidence > 0 && (
                   <div className="flex items-center gap-2">
                     <p className="text-[10px] text-muted-foreground">推演信心度</p>
@@ -351,7 +346,7 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
               : "border-border bg-card"
             }`}>
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider">结算盈亏</p>
-              <p className={`text-4xl font-black font-mono mt-1 ${
+              <p className={`text-4xl font-black font-mono tabular-nums mt-1 ${
                 totalPnl === null ? "text-muted-foreground"
                 : totalPnl > 0   ? "text-profit"
                 : totalPnl < 0   ? "text-loss"
@@ -369,13 +364,36 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
 
         {/* Post-match review */}
         {selectedOutcome && (
-          <div>
-            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">赛后复盘</p>
+          <div className="space-y-4">
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">赛后复盘</p>
 
-            {/* Analysis verdict */}
+            {/* Final score input */}
+            <div className="rounded-md border border-border bg-card p-3">
+              <p className="text-[11px] font-bold text-foreground mb-2">最终比分</p>
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground w-14 truncate">{record.homeTeam}</span>
+                <input
+                  type="number" min={0} inputMode="numeric"
+                  value={scoreHome}
+                  onChange={(e) => setScoreHome(e.target.value)}
+                  className="w-12 bg-muted rounded px-2 py-1.5 text-sm font-mono tabular-nums text-center outline-none"
+                />
+                <span className="text-muted-foreground font-bold">:</span>
+                <input
+                  type="number" min={0} inputMode="numeric"
+                  value={scoreAway}
+                  onChange={(e) => setScoreAway(e.target.value)}
+                  className="w-12 bg-muted rounded px-2 py-1.5 text-sm font-mono tabular-nums text-center outline-none"
+                />
+                <span className="text-[10px] text-muted-foreground w-14 truncate">{record.awayTeam}</span>
+                <span className="text-[10px] text-muted-foreground/50 ml-auto">可选</span>
+              </div>
+            </div>
+
+            {/* Analysis verdict (on personal analysis) */}
             {record.deduction.personalAnalysis && (
-              <div className="rounded-md border border-border bg-card p-3 mb-3">
-                <p className="text-[10px] font-bold text-foreground mb-1.5">个人分析回看</p>
+              <div className="rounded-md border border-border bg-card p-3">
+                <p className="text-[11px] font-bold text-foreground mb-1.5">个人分析回看</p>
                 <p className="text-[11px] text-foreground/80 leading-relaxed whitespace-pre-wrap mb-2">{record.deduction.personalAnalysis}</p>
                 <p className="text-[10px] text-muted-foreground mb-1.5">事后印证</p>
                 <div className="grid grid-cols-3 gap-1.5">
@@ -390,38 +408,97 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
               </div>
             )}
 
-            {autoErrors.length > 0 && checkedErrors.some((e) => autoErrors.includes(e)) && (
-              <p className="text-[10px] text-muted-foreground/60 mb-2">↓ 根据0分项自动预选，可取消</p>
-            )}
-            <div className="grid grid-cols-2 gap-1.5">
-              {ALL_ERROR_OPTIONS.map((err) => (
-                <button key={err} onClick={() => toggleError(err)}
-                  className={`px-3 py-2.5 rounded text-xs font-medium text-left leading-tight transition-colors ${
-                    checkedErrors.includes(err)
-                      ? autoErrors.includes(err)
-                        ? "bg-loss/30 text-loss border border-loss/40"
-                        : "bg-loss/20 text-loss border border-loss/30"
-                      : "bg-muted text-muted-foreground"
-                  }`}
-                >
-                  {err}
-                  {autoErrors.includes(err) && checkedErrors.includes(err) && (
-                    <span className="text-[8px] ml-1 opacity-60">自动</span>
-                  )}
-                </button>
-              ))}
+            {/* Positive notes */}
+            <div>
+              <p className="text-[11px] font-bold text-foreground mb-2">哪里做得好</p>
+              <div className="grid grid-cols-2 gap-1.5">
+                {POSITIVE_OPTIONS.map((note) => (
+                  <button key={note} onClick={() => togglePositive(note)}
+                    className={`px-3 py-2.5 rounded text-xs font-medium text-left leading-tight transition-colors ${
+                      checkedPositives.includes(note)
+                        ? "bg-profit/15 text-profit border border-profit/30"
+                        : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {note}
+                  </button>
+                ))}
+              </div>
             </div>
+
+            {/* Errors */}
+            <div>
+              <p className="text-[11px] font-bold text-foreground mb-2">哪里做得不好</p>
+              <div className="grid grid-cols-2 gap-1.5">
+                {ERROR_OPTIONS.map((err) => (
+                  <button key={err} onClick={() => toggleError(err)}
+                    className={`px-3 py-2.5 rounded text-xs font-medium text-left leading-tight transition-colors ${
+                      checkedErrors.includes(err)
+                        ? "bg-loss/15 text-loss border border-loss/30"
+                        : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {err}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Decision rating — red stars (盈利色, different from yellow confidence stars) */}
+            <div className="rounded-md border border-border bg-card p-3">
+              <div className="flex items-baseline justify-between mb-2">
+                <p className="text-[11px] font-bold text-foreground">本场决策总评</p>
+                <span className="text-[10px] text-muted-foreground/60">非必要</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
+                  {[1, 2, 3, 4, 5].map((n) => {
+                    const active = decisionRating >= n;
+                    return (
+                      <button key={n}
+                        onClick={() => setDecisionRating(decisionRating === n ? 0 : n)}
+                        className="p-1 active:opacity-60 transition-opacity"
+                        aria-label={`决策评分 ${n}`}
+                      >
+                        <Star size={22} strokeWidth={1.5}
+                          className={active ? "fill-profit text-profit" : "text-muted-foreground/40"} />
+                      </button>
+                    );
+                  })}
+                </div>
+                <span className="text-[10px] text-muted-foreground ml-1">
+                  {decisionRating === 0 ? "未评" : `${decisionRating}/5`}
+                </span>
+              </div>
+            </div>
+
+            {/* Review note */}
             <textarea rows={3}
-              className="w-full mt-3 bg-muted rounded-md px-3 py-2 text-xs outline-none resize-none placeholder:text-muted-foreground/40"
+              className="w-full bg-muted rounded-md px-3 py-2 text-xs outline-none resize-none placeholder:text-muted-foreground/40"
               placeholder="复盘备注（可选）..."
               value={reviewNote}
               onChange={(e) => setReviewNote(e.target.value)}
             />
+
             <button
               onClick={() => {
                 if (!record || !selectedOutcome) return;
-                const isCleanWin = (selectedOutcome === "win" || selectedOutcome === "half_win" || selectedOutcome === "push") && autoErrors.length === 0;
-                const hasReflection = reviewNote.trim().length > 0 || checkedErrors.length > 0;
+                const hasReflection =
+                  reviewNote.trim().length > 0 ||
+                  checkedErrors.length > 0 ||
+                  checkedPositives.length > 0 ||
+                  decisionRating > 0 ||
+                  !!analysisVerdict ||
+                  (scoreHome !== "" && scoreAway !== "");
+                const isCleanWin =
+                  (selectedOutcome === "win" || selectedOutcome === "half_win" || selectedOutcome === "push") &&
+                  checkedErrors.length === 0;
+                const parsedHome = scoreHome === "" ? undefined : parseInt(scoreHome, 10);
+                const parsedAway = scoreAway === "" ? undefined : parseInt(scoreAway, 10);
+                const finalScore = (parsedHome !== undefined && !isNaN(parsedHome) &&
+                                    parsedAway !== undefined && !isNaN(parsedAway))
+                  ? { home: parsedHome, away: parsedAway }
+                  : undefined;
                 const updated: BetRecord = {
                   ...record,
                   result: {
@@ -429,6 +506,9 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
                     errors: checkedErrors,
                     reviewNote,
                     analysisVerdict: analysisVerdict ?? undefined,
+                    finalScore,
+                    positiveNotes: checkedPositives.length > 0 ? checkedPositives : undefined,
+                    decisionRating: decisionRating > 0 ? decisionRating : undefined,
                   },
                   completionStatus: isCleanWin || hasReflection ? "complete" : "pending_improve",
                 };
@@ -436,7 +516,7 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
                 setRecord(updated);
                 showToast("复盘已保存", "success");
               }}
-              className="w-full mt-2 py-3 rounded font-bold text-sm bg-foreground text-background active:opacity-80 transition-opacity"
+              className="w-full py-3 rounded font-bold text-sm bg-foreground text-background active:opacity-80 transition-opacity"
             >
               保存复盘
             </button>
@@ -458,23 +538,20 @@ function Chip({ label, value }: { label: string; value: string }) {
   );
 }
 
-function SidedHandicapView({ label, data }: {
+function SidedHandicapView({
+  label, data, homeTeam, awayTeam,
+}: {
   label: string;
-  data: { side: "home" | "away" | ""; values: string[] };
+  data: SidedHandicap;
+  homeTeam: string;
+  awayTeam: string;
 }) {
+  const text = formatSidedHandicap(data, homeTeam, awayTeam);
+  if (!text) return null;  // Incomplete → hide entirely (must select both team AND values)
   return (
-    <div>
-      <p className="text-[10px] text-muted-foreground mb-1.5">{label}</p>
-      <div className="flex flex-wrap gap-1">
-        {data.side && (
-          <span className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground">
-            {data.side === "home" ? "主让" : "客让"}
-          </span>
-        )}
-        {data.values.map((v) => (
-          <span key={v} className="text-[10px] px-2 py-0.5 rounded bg-muted font-mono text-muted-foreground">{v}</span>
-        ))}
-      </div>
+    <div className="flex items-baseline gap-2">
+      <p className="text-[10px] text-muted-foreground shrink-0">{label}</p>
+      <p className="text-[12px] font-mono font-semibold text-foreground flex-1">{text}</p>
     </div>
   );
 }

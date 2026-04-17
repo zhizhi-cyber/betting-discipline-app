@@ -30,6 +30,7 @@ import {
   emptyScoreData,
   emptyDeduction,
   formatBetPreview,
+  formatSidedHandicap,
 } from "@/lib/types";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -56,10 +57,12 @@ const CONFIDENCE_LABELS: Record<number, string> = {
 // ─── Sided handicap picker (reused for 合理区间 / 主胜应开 / 客胜应开) ──────────
 
 function SidedHandicapPicker({
-  data, onChange,
+  data, onChange, homeTeam, awayTeam,
 }: {
   data: SidedHandicap;
   onChange: (next: SidedHandicap) => void;
+  homeTeam: string;
+  awayTeam: string;
 }) {
   const hasHighSelected = data.values.some((v) => HANDICAP_HIGH.includes(v));
   const [showHigh, setShowHigh] = useState(hasHighSelected);
@@ -73,6 +76,10 @@ function SidedHandicapPicker({
     });
   };
 
+  const preview = formatSidedHandicap(data, homeTeam, awayTeam);
+  const hasSide = !!data.side;
+  const hasValues = data.values.length > 0;
+
   return (
     <>
       <div className="grid grid-cols-2 gap-1.5 mb-1.5">
@@ -83,7 +90,7 @@ function SidedHandicapPicker({
               data.side === s ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
             }`}
           >
-            {s === "home" ? "主让" : "客让"}
+            {s === "home" ? `主让（${homeTeam || "主队"}）` : `客让（${awayTeam || "客队"}）`}
           </button>
         ))}
       </div>
@@ -118,6 +125,17 @@ function SidedHandicapPicker({
           })}
         </div>
       )}
+
+      {/* Compact preview or incomplete hint */}
+      {preview ? (
+        <div className="mt-2 rounded bg-foreground/5 border border-foreground/10 px-2.5 py-1.5">
+          <p className="text-[11px] font-mono text-foreground/90">{preview}</p>
+        </div>
+      ) : (hasSide || hasValues) ? (
+        <p className="mt-2 text-[10px] text-muted-foreground/60">
+          {hasSide ? "· 还需选择让球数值" : "· 还需选择让球方"}
+        </p>
+      ) : null}
     </>
   );
 }
@@ -637,6 +655,8 @@ function ReviewInner() {
                 <SidedHandicapPicker
                   data={deduction.fairRanges}
                   onChange={(next) => setDeduction((p) => ({ ...p, fairRanges: next }))}
+                  homeTeam={homeTeam}
+                  awayTeam={awayTeam}
                 />
               </div>
 
@@ -646,6 +666,8 @@ function ReviewInner() {
                 <SidedHandicapPicker
                   data={deduction.homeWinBookieExpected}
                   onChange={(next) => setDeduction((p) => ({ ...p, homeWinBookieExpected: next }))}
+                  homeTeam={homeTeam}
+                  awayTeam={awayTeam}
                 />
               </div>
 
@@ -655,6 +677,8 @@ function ReviewInner() {
                 <SidedHandicapPicker
                   data={deduction.awayWinBookieExpected}
                   onChange={(next) => setDeduction((p) => ({ ...p, awayWinBookieExpected: next }))}
+                  homeTeam={homeTeam}
+                  awayTeam={awayTeam}
                 />
               </div>
 
