@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useEffect, Suspense } from "react";
+import { useState, useMemo, useEffect, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, ArrowLeft } from "lucide-react";
@@ -786,6 +786,7 @@ function MonthListView({
       )}
 
       <div className="px-4 py-3 space-y-4">
+        <CalendarGrid year={year} month={month} allUnified={allUnified} />
         {stats.settled > 0 && (
           <div className="border border-border rounded-md bg-card/40 px-3 pt-2 pb-3">
             <div className="flex items-center justify-between mb-1.5">
@@ -806,6 +807,247 @@ function MonthListView({
       </div>
 
       <BottomNav />
+    </div>
+  );
+}
+
+// ─── Calendar Grid (embedded in MonthListView) ────────────────────────────────
+
+function CalendarGrid({
+  year, month, allUnified,
+}: {
+  year: number;
+  month: number;
+  allUnified: UnifiedRecord[];
+}) {
+  // Per-day stats map keyed by YYYY-MM-DD
+  const dayMap = useMemo(() => {
+    const map = new Map<string, {
+      pnl: number; settledBets: number; unsettledBets: number; watches: number; items: UnifiedRecord[];
+    }>();
+    for (const r of allUnified) {
+      const k = matchDayKey(r.kickoffTime);
+      const cur = map.get(k) ?? { pnl: 0, settledBets: 0, unsettledBets: 0, watches: 0, items: [] };
+      cur.items.push(r);
+      if (r.type === "bet") {
+        if (r.result) {
+          cur.settledBets++;
+          cur.pnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, r.result!.outcome), 0);
+        } else {
+          cur.unsettledBets++;
+        }
+      } else {
+        cur.watches++;
+      }
+      map.set(k, cur);
+    }
+    return map;
+  }, [allUnified]);
+
+  // Build 6×7 grid: Monday-anchored
+  const grid = useMemo(() => {
+    const firstOfMonth = new Date(year, month - 1, 1);
+    const dow = firstOfMonth.getDay(); // 0=Sun..6=Sat
+    const daysBeforeMon = dow === 0 ? 6 : dow - 1; // align Monday=0
+    const start = new Date(firstOfMonth);
+    start.setDate(start.getDate() - daysBeforeMon);
+    const cells: { date: Date; key: string; inMonth: boolean }[] = [];
+    for (let i = 0; i < 42; i++) {
+      const d = new Date(start);
+      d.setDate(d.getDate() + i);
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const dd = String(d.getDate()).padStart(2, "0");
+      cells.push({ date: d, key: `${y}-${m}-${dd}`, inMonth: d.getFullYear() === year && d.getMonth() + 1 === month });
+    }
+    return cells;
+  }, [year, month]);
+
+  // Month max abs PnL across in-month cells (for 3-tier color depth)
+  const maxAbs = useMemo(() => {
+    let max = 0;
+    for (const c of grid) {
+      if (!c.inMonth) continue;
+      const s = dayMap.get(c.key);
+      if (s) max = Math.max(max, Math.abs(s.pnl));
+    }
+    return max;
+  }, [grid, dayMap]);
+
+  const todayKey = (() => {
+    const n = new Date();
+    return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, "0")}-${String(n.getDate()).padStart(2, "0")}`;
+  })();
+
+  // Drawer state
+  const [drawerKey, setDrawerKey] = useState<string | null>(null);
+
+  // Long-press tooltip state
+  const [tipKey, setTipKey] = useState<string | null>(null);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function cellColor(pnl: number): { bg: string; fg: string } {
+    if (pnl === 0 || maxAbs === 0) return { bg: "transparent", fg: "text-muted-foreground/60" };
+    const abs = Math.abs(pnl);
+    const tier = abs > (maxAbs * 2) / 3 ? 3 : abs > maxAbs / 3 ? 2 : 1;
+    if (pnl > 0) {
+      const bg = tier === 3 ? "rgba(224,53,53,0.35)" : tier === 2 ? "rgba(224,53,53,0.2)" : "rgba(224,53,53,0.08)";
+      return { bg, fg: "text-profit" };
+    }
+    const bg = tier === 3 ? "rgba(42,157,92,0.35)" : tier === 2 ? "rgba(42,157,92,0.2)" : "rgba(42,157,92,0.08)";
+    return { bg, fg: "text-loss" };
+  }
+
+  function handleLongPressStart(k: string) {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+    longPressTimer.current = setTimeout(() => setTipKey(k), 450);
+  }
+  function handleLongPressEnd() {
+    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+  }
+  function handleLongPressRelease() {
+    handleLongPressEnd();
+    // Keep tip visible briefly then clear
+    setTimeout(() => setTipKey(null), 300);
+  }
+
+  const weekDayHeaders = ["一", "二", "三", "四", "五", "六", "日"];
+  const drawerItems = drawerKey ? (dayMap.get(drawerKey)?.items ?? []) : [];
+
+  return (
+    <div className="border border-border rounded-md bg-card/40 px-3 pt-2 pb-3 select-none">
+      <div className="flex items-center justify-between mb-1.5">
+        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+          月历 · {month}月每日盈亏
+        </p>
+        <div className="flex items-center gap-2 text-[9px] text-muted-foreground/60">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm" style={{ background: "rgba(224,53,53,0.35)" }} />盈</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm" style={{ background: "rgba(42,157,92,0.35)" }} />亏</span>
+          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-warning" />未结</span>
+          <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-full bg-muted-foreground/50" />观察</span>
+        </div>
+      </div>
+      <div>
+        {/* Weekday headers */}
+        <div className="grid grid-cols-7 gap-1 mb-1 px-0.5">
+          {weekDayHeaders.map((w, i) => (
+            <div key={w} className={`text-[10px] text-center font-semibold ${i >= 5 ? "text-muted-foreground/60" : "text-muted-foreground/80"}`}>
+              {w}
+            </div>
+          ))}
+        </div>
+
+        {/* Calendar grid */}
+        <div className="grid grid-cols-7 gap-1 relative">
+          {grid.map(({ date, key, inMonth }) => {
+            const s = dayMap.get(key);
+            const pnl = s?.pnl ?? 0;
+            const hasActivity = !!s && (s.settledBets + s.unsettledBets + s.watches) > 0;
+            const hasPnl = !!s && s.settledBets > 0;
+            const { bg, fg } = cellColor(pnl);
+            const isToday = key === todayKey;
+            const isFuture = date.getTime() > new Date().setHours(23, 59, 59, 999);
+            const dim = !inMonth;
+            const disabled = isFuture;
+            return (
+              <button
+                key={key}
+                disabled={disabled || !hasActivity}
+                onClick={() => hasActivity && setDrawerKey(key)}
+                onTouchStart={() => hasActivity && handleLongPressStart(key)}
+                onTouchEnd={handleLongPressRelease}
+                onTouchMove={handleLongPressEnd}
+                onContextMenu={(e) => { e.preventDefault(); if (hasActivity) setTipKey(key); }}
+                className={`relative aspect-square rounded-md border transition-colors ${
+                  isToday ? "border-foreground/70" : "border-white/[0.04]"
+                } ${dim ? "opacity-25" : ""} ${hasActivity ? "active:brightness-125" : ""}`}
+                style={{ background: bg }}
+              >
+                {/* date number top-left */}
+                <span className={`absolute top-1 left-1 text-[9px] font-mono ${isToday ? "text-foreground font-bold" : "text-muted-foreground/70"}`}>
+                  {date.getDate()}
+                </span>
+                {/* unsettled dot top-right */}
+                {s && s.unsettledBets > 0 && (
+                  <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-warning" />
+                )}
+                {/* watch dot bottom-right */}
+                {s && s.watches > 0 && (
+                  <span className="absolute bottom-1 right-1 w-1.5 h-1.5 rounded-full bg-muted-foreground/50" />
+                )}
+                {/* centered PnL */}
+                {hasPnl ? (
+                  <span className={`absolute inset-0 flex items-center justify-center text-[11px] font-black font-mono tabular-nums ${fg}`}>
+                    {pnl === 0 ? "—" : `${pnl > 0 ? "+" : ""}${Math.round(pnl / 1 >= 1000 || pnl <= -1000 ? pnl / 1 : pnl)}`}
+                  </span>
+                ) : hasActivity ? (
+                  <span className="absolute inset-0 flex items-center justify-center text-[10px] text-muted-foreground/40">·</span>
+                ) : null}
+
+                {/* Long-press tooltip */}
+                {tipKey === key && s && (
+                  <div className="absolute left-1/2 -translate-x-1/2 -top-14 z-30 whitespace-nowrap bg-background border border-border rounded-md px-2 py-1.5 shadow-lg text-[10px] font-mono">
+                    <div className={pnl >= 0 ? "text-profit" : "text-loss"}>
+                      {pnl === 0 ? "走水" : `${pnl > 0 ? "+" : ""}¥${Math.abs(pnl).toLocaleString()}`}
+                    </div>
+                    <div className="text-muted-foreground/80 text-[9px]">
+                      {s.settledBets + s.unsettledBets > 0 && `${s.settledBets + s.unsettledBets}下注 `}
+                      {s.watches > 0 && `${s.watches}观察`}
+                      {s.unsettledBets > 0 && ` · ${s.unsettledBets}未结`}
+                    </div>
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+      </div>
+
+      {/* Day drawer (bottom sheet) */}
+      {drawerKey && (
+        <DayDrawer
+          dayKey={drawerKey}
+          items={drawerItems}
+          onClose={() => setDrawerKey(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Day drawer (bottom sheet listing one day's records) ──────────────────────
+
+function DayDrawer({ dayKey, items, onClose }: {
+  dayKey: string;
+  items: UnifiedRecord[];
+  onClose: () => void;
+}) {
+  const dayBets = items.filter((r): r is BetRecord => r.type === "bet" && !!r.result);
+  const dayPnl = dayBets.reduce((s, r) => s + r.bets.reduce((bs, b) => bs + calcPnl(b.amount, b.odds, r.result!.outcome), 0), 0);
+  const label = formatMatchDayLabel(dayKey);
+  return (
+    <div className="fixed inset-0 z-40" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/50" />
+      <div
+        className="absolute bottom-0 left-0 right-0 bg-background rounded-t-2xl border-t border-border max-h-[70vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="sticky top-0 bg-background px-4 pt-3 pb-2 border-b border-border flex items-center justify-between">
+          <div>
+            <p className="text-sm font-bold">{label}</p>
+            {dayBets.length > 0 && (
+              <p className={`text-[11px] font-mono tabular-nums mt-0.5 ${dayPnl >= 0 ? "text-profit" : "text-loss"}`}>
+                {dayPnl >= 0 ? "+" : ""}¥{Math.abs(dayPnl).toLocaleString()} · {dayBets.length} 下注结算
+              </p>
+            )}
+          </div>
+          <button onClick={onClose} className="text-muted-foreground text-xs">关闭</button>
+        </div>
+        <div className="px-4 py-3">
+          <GroupedList items={items} />
+        </div>
+      </div>
     </div>
   );
 }
