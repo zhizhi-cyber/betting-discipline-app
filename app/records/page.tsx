@@ -1027,13 +1027,18 @@ function DayDrawer({ dayKey, items, onClose }: {
   const dayPnl = dayBets.reduce((s, r) => s + r.bets.reduce((bs, b) => bs + calcPnl(b.amount, b.odds, r.result!.outcome), 0), 0);
   const label = formatMatchDayLabel(dayKey);
   return (
-    <div className="fixed inset-0 z-40" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/50" />
+    <div className="fixed inset-0 z-[60]" onClick={onClose}>
+      <div className="absolute inset-0 bg-black/60" />
       <div
-        className="absolute bottom-0 left-0 right-0 bg-background rounded-t-2xl border-t border-border max-h-[70vh] overflow-y-auto"
+        className="absolute bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] bg-background rounded-t-2xl border-t border-border flex flex-col"
+        style={{ maxHeight: "85dvh" }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="sticky top-0 bg-background px-4 pt-3 pb-2 border-b border-border flex items-center justify-between">
+        {/* Drag handle */}
+        <div className="flex justify-center pt-2 pb-1 shrink-0">
+          <span className="w-10 h-1 rounded-full bg-muted-foreground/30" />
+        </div>
+        <div className="px-4 pb-2 border-b border-border flex items-center justify-between shrink-0">
           <div>
             <p className="text-sm font-bold">{label}</p>
             {dayBets.length > 0 && (
@@ -1042,9 +1047,12 @@ function DayDrawer({ dayKey, items, onClose }: {
               </p>
             )}
           </div>
-          <button onClick={onClose} className="text-muted-foreground text-xs">关闭</button>
+          <button onClick={onClose} className="text-muted-foreground text-xs px-2 py-1 -mr-2">关闭</button>
         </div>
-        <div className="px-4 py-3">
+        <div
+          className="flex-1 overflow-y-auto overscroll-contain px-4 pt-3"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom) + 24px)", WebkitOverflowScrolling: "touch" }}
+        >
           <GroupedList items={items} />
         </div>
       </div>
