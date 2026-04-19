@@ -76,7 +76,7 @@ export default function AnalyticsPanel({
               );
             })}
           </div>
-          <p className="text-[9px] text-muted-foreground/50 mt-2">赢半计 0.5 · 走不计入</p>
+          <p className="text-[9px] text-muted-foreground/50 mt-2">赢半计 0.5 · 走盘不计入</p>
         </GlassCard>
       )}
 

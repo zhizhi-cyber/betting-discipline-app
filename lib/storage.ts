@@ -477,7 +477,7 @@ export interface RecordsAnalytics {
   settledCount: number;
   totalPnl: number;
   totalBet: number;              // 全部本金投入（含 push 退本部分）
-  effectiveBet: number;          // 有效投注（剔除 push 与走水退本部分），用于 ROI
+  effectiveBet: number;          // 有效投注（剔除走盘与走水退本的本金），用于 ROI
   roi: number;                   // = totalPnl / effectiveBet × 100
   disciplineScore: number;       // % of non-violation bets
   violationCount: number;

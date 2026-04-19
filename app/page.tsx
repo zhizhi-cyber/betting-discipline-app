@@ -20,7 +20,7 @@ function fmtDate(iso: string) {
 }
 
 const OUTCOME_LABELS: Record<Outcome, string> = {
-  win: "胜", half_win: "赢半", push: "走", half_loss: "输半", loss: "负",
+  win: "赢", half_win: "赢半", push: "走盘", half_loss: "输半", loss: "输",
 };
 
 const OUTCOME_PNL_COLOR: Record<Outcome, string> = {

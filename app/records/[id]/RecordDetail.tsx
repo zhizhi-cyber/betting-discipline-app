@@ -15,11 +15,11 @@ const GRADE_COLORS: Record<string, string> = {
 };
 
 const OUTCOMES: { key: Outcome; label: string }[] = [
-  { key: "win",       label: "赢全" },
-  { key: "half_win",  label: "赢半" },
-  { key: "push",      label: "走水" },
-  { key: "half_loss", label: "输半" },
-  { key: "loss",      label: "输全" },
+  { key: "win",       label: "赢盘" },
+  { key: "half_win",  label: "赢半盘" },
+  { key: "push",      label: "走盘" },
+  { key: "half_loss", label: "输半盘" },
+  { key: "loss",      label: "输盘" },
 ];
 
 const SCORE_LABELS: Record<string, string> = {

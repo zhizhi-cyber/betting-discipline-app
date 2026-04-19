@@ -161,7 +161,7 @@ function calcBetStats(bets: BetRecord[]) {
 // ─── Labels ───────────────────────────────────────────────────────────────────
 
 const OUTCOME_LABELS: Record<Outcome, string> = {
-  win: "胜", half_win: "赢半", push: "走", half_loss: "输半", loss: "负",
+  win: "赢", half_win: "赢半", push: "走盘", half_loss: "输半", loss: "输",
 };
 
 const CONCLUSION_LABELS: Record<ReviewConclusion, string> = {
@@ -1000,7 +1000,7 @@ function CalendarGrid({
                 {tipKey === key && s && (
                   <div className="absolute left-1/2 -translate-x-1/2 -top-14 z-30 whitespace-nowrap bg-background border border-border rounded-md px-2 py-1.5 shadow-lg text-[10px] font-mono">
                     <div className={pnl >= 0 ? "text-profit" : "text-loss"}>
-                      {pnl === 0 ? "走水" : `${pnl > 0 ? "+" : "\u2212"}¥${Math.abs(pnl).toLocaleString()}`}
+                      {pnl === 0 ? "走盘" : `${pnl > 0 ? "+" : "\u2212"}¥${Math.abs(pnl).toLocaleString()}`}
                     </div>
                     <div className="text-muted-foreground/80 text-[9px]">
                       {s.settledBets + s.unsettledBets > 0 && `${s.settledBets + s.unsettledBets}下注 `}
