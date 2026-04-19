@@ -761,7 +761,7 @@ function MonthListView({
                 <span className="flex items-center gap-1"><span className="w-2 h-px" style={{ background: "#f5c842" }} />累计</span>
               </div>
             </div>
-            <PnlBars data={dailyBarsForMonth(monthBets, year, month)} height={140} />
+            <PnlBars data={dailyBarsForMonth(monthBets, year, month)} height={140} zoomable />
           </div>
         )}
         <AnalyticsPanel bets={monthBets} watches={monthWatches} />

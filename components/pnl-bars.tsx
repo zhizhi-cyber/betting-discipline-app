@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, useEffect } from "react";
+import { Eye, EyeOff } from "lucide-react";
 
 // PnL bar chart + cumulative line overlay.
 // 盈利红 (#e03535) / 亏损绿 (#2a9d5c) — locked per Chinese market convention.
@@ -57,7 +58,9 @@ export default function PnlBars({
 }: Props) {
   const [zoom, setZoom] = useState(1);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
+  const [cumVisible, setCumVisible] = useState(showCumulative);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const gradId = useMemo(() => `cum-grad-${Math.random().toString(36).slice(2, 9)}`, []);
 
   // Auto-detect granularity: if consecutive keys are ≥6 days apart → week
   const gran: Granularity = useMemo(() => {
@@ -129,7 +132,7 @@ export default function PnlBars({
   }
 
   const padLeft = 34;
-  const padRight = showCumulative ? 38 : 10;
+  const padRight = cumVisible ? 38 : 10;
   const padTop = 8;
   const padBottom = 18;
   // SVG layout width stretches to container; use a large virtual viewBox for crisp scaling.
@@ -178,15 +181,19 @@ export default function PnlBars({
   const tickCls = "fill-muted-foreground/70";
   const gridCls = "stroke-border/40";
 
-  // Cumulative polyline points
-  const cumPoints = showCumulative
-    ? cumulative
-        .map((v, i) => {
-          const cx = padLeft + bandW * (i + 0.5);
-          const cy = midY - (v / maxAbsCum) * half;
-          return `${cx.toFixed(1)},${cy.toFixed(1)}`;
-        })
-        .join(" ")
+  // Cumulative polyline points + closed area path (for gradient fill)
+  const cumCoords = cumVisible
+    ? cumulative.map((v, i) => {
+        const cx = padLeft + bandW * (i + 0.5);
+        const cy = midY - (v / maxAbsCum) * half;
+        return { cx, cy };
+      })
+    : [];
+  const cumPoints = cumCoords.map((p) => `${p.cx.toFixed(1)},${p.cy.toFixed(1)}`).join(" ");
+  const cumAreaPath = cumCoords.length > 1
+    ? `M ${cumCoords[0].cx.toFixed(1)},${midY.toFixed(1)} ` +
+      cumCoords.map((p) => `L ${p.cx.toFixed(1)},${p.cy.toFixed(1)}`).join(" ") +
+      ` L ${cumCoords[cumCoords.length - 1].cx.toFixed(1)},${midY.toFixed(1)} Z`
     : "";
 
   const active = activeIdx != null ? data[activeIdx] : null;
@@ -194,23 +201,40 @@ export default function PnlBars({
 
   return (
     <div className={className}>
-      {zoomable && (
+      {(zoomable || showCumulative) && (
         <div className="flex items-center justify-between mb-1">
-          <div className="text-[9px] text-muted-foreground/60">双指缩放 · 滑动查看</div>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setZoom((z) => Math.max(1, +(z - 0.5).toFixed(2)))}
-              className="w-5 h-5 rounded border border-border text-[11px] leading-none flex items-center justify-center text-muted-foreground active:opacity-60"
-              aria-label="zoom out"
-            >−</button>
-            <span className="text-[9px] font-mono tabular-nums text-muted-foreground w-8 text-center">
-              {zoom.toFixed(1)}x
-            </span>
-            <button
-              onClick={() => setZoom((z) => Math.min(5, +(z + 0.5).toFixed(2)))}
-              className="w-5 h-5 rounded border border-border text-[11px] leading-none flex items-center justify-center text-muted-foreground active:opacity-60"
-              aria-label="zoom in"
-            >+</button>
+          <div className="text-[9px] text-muted-foreground/60">
+            {zoomable ? "双指缩放 · 滑动查看" : ""}
+          </div>
+          <div className="flex items-center gap-2">
+            {showCumulative && (
+              <button
+                onClick={() => setCumVisible((v) => !v)}
+                className="flex items-center gap-0.5 text-[9px] text-muted-foreground active:opacity-60"
+                aria-label="toggle cumulative"
+                title={cumVisible ? "隐藏累计线" : "显示累计线"}
+              >
+                {cumVisible ? <Eye size={11} strokeWidth={2} /> : <EyeOff size={11} strokeWidth={2} />}
+                <span>累计</span>
+              </button>
+            )}
+            {zoomable && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setZoom((z) => Math.max(1, +(z - 0.5).toFixed(2)))}
+                  className="w-5 h-5 rounded border border-border text-[11px] leading-none flex items-center justify-center text-muted-foreground active:opacity-60"
+                  aria-label="zoom out"
+                >−</button>
+                <span className="text-[9px] font-mono tabular-nums text-muted-foreground w-8 text-center">
+                  {zoom.toFixed(1)}x
+                </span>
+                <button
+                  onClick={() => setZoom((z) => Math.min(5, +(z + 0.5).toFixed(2)))}
+                  className="w-5 h-5 rounded border border-border text-[11px] leading-none flex items-center justify-center text-muted-foreground active:opacity-60"
+                  aria-label="zoom in"
+                >+</button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -261,7 +285,7 @@ export default function PnlBars({
           })}
 
           {/* Right Y-axis labels (cumulative) */}
-          {showCumulative && rightTicks.map((t, i) => {
+          {cumVisible && rightTicks.map((t, i) => {
             const y = midY - (t / maxAbsCum) * half;
             return (
               <text
@@ -298,20 +322,31 @@ export default function PnlBars({
             );
           })}
 
-          {/* Cumulative polyline */}
-          {showCumulative && data.length > 1 && (
-            <polyline
-              points={cumPoints}
-              fill="none"
-              stroke={CUM}
-              strokeWidth={1.4}
-              strokeLinejoin="round"
-              strokeLinecap="round"
-              opacity={0.92}
-            />
+          {/* Cumulative gradient defs + area fill + polyline */}
+          {cumVisible && data.length > 1 && (
+            <>
+              <defs>
+                <linearGradient id={gradId} x1="0" y1={padTop} x2="0" y2={padTop + innerH} gradientUnits="userSpaceOnUse">
+                  <stop offset="0%" stopColor={CUM} stopOpacity={0.35} />
+                  <stop offset={`${((midY - padTop) / innerH) * 100}%`} stopColor={CUM} stopOpacity={0} />
+                  <stop offset={`${((midY - padTop) / innerH) * 100}%`} stopColor="#9ca3af" stopOpacity={0} />
+                  <stop offset="100%" stopColor="#9ca3af" stopOpacity={0.25} />
+                </linearGradient>
+              </defs>
+              <path d={cumAreaPath} fill={`url(#${gradId})`} stroke="none" />
+              <polyline
+                points={cumPoints}
+                fill="none"
+                stroke={CUM}
+                strokeWidth={1.4}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+                opacity={0.95}
+              />
+            </>
           )}
           {/* Cumulative dots */}
-          {showCumulative && data.map((_, i) => {
+          {cumVisible && data.map((_, i) => {
             const cx = padLeft + bandW * (i + 0.5);
             const cy = midY - (cumulative[i] / maxAbsCum) * half;
             return (
@@ -383,7 +418,7 @@ export default function PnlBars({
             <span className={active.pnl > 0 ? "text-profit" : active.pnl < 0 ? "text-loss" : "text-muted-foreground"}>
               当期 {fmtMoney(active.pnl)}
             </span>
-            {showCumulative && (
+            {cumVisible && (
               <span style={{ color: CUM }}>
                 累计 {fmtMoney(activeCum)}
               </span>

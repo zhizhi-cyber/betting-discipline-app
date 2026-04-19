@@ -390,7 +390,7 @@ export default function HomePage() {
             <PnlBars
               data={barData}
               height={140}
-              zoomable={timeRange === "year" || timeRange === "all"}
+              zoomable={timeRange === "month" || timeRange === "year" || timeRange === "all"}
             />
           </motion.div>
         </div>
