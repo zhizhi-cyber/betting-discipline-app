@@ -71,6 +71,28 @@ function filterByWeek(items: UnifiedRecord[], anchor: Date): UnifiedRecord[] {
   });
 }
 
+// Daily PnL bars for a week (7 bars, Monday-anchored).
+function dailyBarsForWeek(bets: BetRecord[], weekAnchor: Date): { key: string; pnl: number }[] {
+  const ws = weekStart(weekAnchor);
+  const out: { key: string; pnl: number }[] = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(ws);
+    d.setDate(d.getDate() + i);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const k = `${y}-${m}-${dd}`;
+    let pnl = 0;
+    for (const r of bets) {
+      if (!r.result) continue;
+      if (matchDayKey(r.kickoffTime) !== k) continue;
+      pnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, r.result!.outcome), 0);
+    }
+    out.push({ key: k, pnl });
+  }
+  return out;
+}
+
 // Daily PnL bars for a calendar month (1 bar per day; grouped by match-day).
 function dailyBarsForMonth(bets: BetRecord[], year: number, month: number): { key: string; pnl: number }[] {
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -515,6 +537,21 @@ function WeekView({
       </div>
 
       <div className="px-4 py-3 space-y-4">
+        {stats.settled > 0 && (
+          <div className="border border-border rounded-md bg-card/40 px-3 pt-2 pb-3">
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+                周K · 每日盈亏
+              </p>
+              <div className="flex items-center gap-2 text-[9px] font-mono tabular-nums">
+                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-profit" />盈</span>
+                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-loss" />亏</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-px" style={{ background: "#f5c842" }} />累计</span>
+              </div>
+            </div>
+            <PnlBars data={dailyBarsForWeek(weekBets, weekAnchor)} height={140} />
+          </div>
+        )}
         <AnalyticsPanel bets={weekBets} watches={weekWatches} />
         <GroupedList items={weekItems} highlightDate={highlightDate} />
       </div>
