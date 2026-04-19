@@ -597,10 +597,17 @@ function YearView({
       <div className="px-4 py-3 space-y-4">
         {yearStats.settled > 0 && (
           <div className="border border-border rounded-md bg-card/40 px-3 pt-2 pb-3">
-            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">
-              周K · {year}年每周盈亏
-            </p>
-            <PnlBars data={weeklyBarsForYear(yearBets, year)} height={72} />
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+                周K · {year}年每周盈亏
+              </p>
+              <div className="flex items-center gap-2 text-[9px] font-mono tabular-nums">
+                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-profit" />盈</span>
+                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-loss" />亏</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-px" style={{ background: "#f5c842" }} />累计</span>
+              </div>
+            </div>
+            <PnlBars data={weeklyBarsForYear(yearBets, year)} height={160} zoomable />
           </div>
         )}
         {hasAnyData && <AnalyticsPanel bets={yearBets} watches={yearAbandoned} />}
@@ -744,10 +751,17 @@ function MonthListView({
       <div className="px-4 py-3 space-y-4">
         {stats.settled > 0 && (
           <div className="border border-border rounded-md bg-card/40 px-3 pt-2 pb-3">
-            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">
-              日K · {month}月每日盈亏
-            </p>
-            <PnlBars data={dailyBarsForMonth(monthBets, year, month)} height={72} />
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+                日K · {month}月每日盈亏
+              </p>
+              <div className="flex items-center gap-2 text-[9px] font-mono tabular-nums">
+                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-profit" />盈</span>
+                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-loss" />亏</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-px" style={{ background: "#f5c842" }} />累计</span>
+              </div>
+            </div>
+            <PnlBars data={dailyBarsForMonth(monthBets, year, month)} height={140} />
           </div>
         )}
         <AnalyticsPanel bets={monthBets} watches={monthWatches} />

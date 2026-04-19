@@ -290,13 +290,6 @@ export default function HomePage() {
           transition={{ duration: 0.4, ease: "easeOut" }}
           className="relative rounded-2xl overflow-hidden border border-white/[0.06] bg-card/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
         >
-          {/* PnL bars as ambient bottom layer */}
-          {hasSparkData && (
-            <div className="absolute inset-x-0 bottom-0 h-16 pointer-events-none opacity-60 px-2">
-              <PnlBars data={barData} height={64} />
-            </div>
-          )}
-
           <div className="relative px-5 pt-4 pb-5">
             {/* Time range tabs */}
             <div className="flex items-center gap-0.5 bg-background/40 backdrop-blur rounded-full p-0.5 w-fit mb-3 border border-white/[0.04]">
@@ -371,6 +364,37 @@ export default function HomePage() {
           </div>
         </motion.div>
       </div>
+
+      {/* ── PnL Chart Card ─────────────────────────────────────── */}
+      {hasSparkData && (
+        <div className="px-4 pt-3">
+          <motion.div
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.35, delay: 0.05, ease: "easeOut" }}
+            className="rounded-xl border border-white/[0.05] bg-card/30 backdrop-blur-xl px-3 pt-2 pb-3"
+          >
+            <div className="flex items-center justify-between mb-1.5">
+              <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+                {timeRange === "week" ? "周K · 每日盈亏"
+                  : timeRange === "month" ? "月K · 每日盈亏"
+                  : timeRange === "year" ? "年K · 每周盈亏"
+                  : "全部 · 每周盈亏"}
+              </p>
+              <div className="flex items-center gap-2 text-[9px] font-mono tabular-nums">
+                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-profit" />盈</span>
+                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-loss" />亏</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-px" style={{ background: "#f5c842" }} />累计</span>
+              </div>
+            </div>
+            <PnlBars
+              data={barData}
+              height={140}
+              zoomable={timeRange === "year" || timeRange === "all"}
+            />
+          </motion.div>
+        </div>
+      )}
 
       {/* ── Yesterday Activity ─────────────────────────────────── */}
       {(yesterdayStats.bets > 0 || yesterdayStats.watches > 0) && (
