@@ -18,6 +18,7 @@ import { weekStart, weekEnd, matchDayKey, matchDayStart, formatMatchDayLabel, fo
 import { getBetRecords, getAbandonedRecords, getSettings, saveSettings } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 import AnalyticsPanel from "@/components/analytics-panel";
+import PnlBars from "@/components/pnl-bars";
 import RecordDetail from "./[id]/RecordDetail";
 import AbandonedDetail from "../abandoned/[id]/AbandonedDetail";
 
@@ -70,6 +71,50 @@ function filterByWeek(items: UnifiedRecord[], anchor: Date): UnifiedRecord[] {
   });
 }
 
+// Daily PnL bars for a calendar month (1 bar per day; grouped by match-day).
+function dailyBarsForMonth(bets: BetRecord[], year: number, month: number): { key: string; pnl: number }[] {
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const out: { key: string; pnl: number }[] = [];
+  for (let d = 1; d <= daysInMonth; d++) {
+    const k = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    let pnl = 0;
+    for (const r of bets) {
+      if (!r.result) continue;
+      if (matchDayKey(r.kickoffTime) !== k) continue;
+      pnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, r.result!.outcome), 0);
+    }
+    out.push({ key: k, pnl });
+  }
+  return out;
+}
+
+// Weekly PnL bars for a calendar year — 52 ISO weeks anchored to Monday.
+function weeklyBarsForYear(bets: BetRecord[], year: number): { key: string; pnl: number }[] {
+  // Find first Monday ≥ Jan 1 of year's ISO scheme; use simple approach: 52 weeks starting from first Monday of the year
+  const jan1 = new Date(year, 0, 1);
+  const dow = jan1.getDay();
+  const diffToMon = dow === 0 ? 1 : (8 - dow) % 7;
+  const firstMon = new Date(year, 0, 1 + diffToMon);
+  firstMon.setHours(10, 0, 0, 0);
+  const out: { key: string; pnl: number }[] = [];
+  for (let w = 0; w < 52; w++) {
+    const start = new Date(firstMon);
+    start.setDate(start.getDate() + w * 7);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    const k = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
+    let pnl = 0;
+    for (const r of bets) {
+      if (!r.result) continue;
+      const a = matchDayStart(r.kickoffTime);
+      if (a < start || a >= end) continue;
+      pnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, r.result!.outcome), 0);
+    }
+    out.push({ key: k, pnl });
+  }
+  return out;
+}
+
 function calcBetStats(bets: BetRecord[]) {
   let totalBet = 0;
   let totalPnl = 0;
@@ -102,12 +147,36 @@ const GRADE_COLORS: Record<string, string> = {
 };
 
 // ─── Completion Indicator ─────────────────────────────────────────────────────
+// For pending states: shows a dot; for completed bets/watches, pass outcome
+// and render a semantic mark (red ✓ = 对, green ✗ = 错, gray — = 走, gray ✓ = 仍不后悔).
 
 function CompletionDot({ status }: { status: string }) {
   if (status === "pending_review") return <span className="w-2 h-2 rounded-full bg-loss block shrink-0 animate-pulse" />;
   if (status === "pending_improve") return <span className="w-2 h-2 rounded-full bg-warning block shrink-0" />;
-  if (status === "complete") return <span className="text-[10px] text-profit leading-none shrink-0">✓</span>;
+  if (status === "complete") return <span className="text-[11px] text-profit leading-none shrink-0">✓</span>;
   return <span className="w-2 h-2 rounded-full bg-border block shrink-0" />;
+}
+
+// For a settled bet: win/half_win → red ✓; loss/half_loss → green ✗; push → gray —
+function BetOutcomeMark({ outcome }: { outcome?: Outcome }) {
+  if (!outcome) return null;
+  if (outcome === "win" || outcome === "half_win")
+    return <span className="text-[13px] font-black text-profit leading-none shrink-0" aria-label="对">✓</span>;
+  if (outcome === "loss" || outcome === "half_loss")
+    return <span className="text-[13px] font-black text-loss leading-none shrink-0" aria-label="错">✗</span>;
+  // push
+  return <span className="text-[13px] font-black text-muted-foreground leading-none shrink-0" aria-label="走">—</span>;
+}
+
+// For a reviewed watch: abandon_correct → red ✓; abandon_wrong → green ✗; no_regret → gray ✓
+function WatchOutcomeMark({ conclusion }: { conclusion?: ReviewConclusion }) {
+  if (!conclusion) return null;
+  if (conclusion === "abandon_correct")
+    return <span className="text-[13px] font-black text-profit leading-none shrink-0" aria-label="对">✓</span>;
+  if (conclusion === "abandon_wrong")
+    return <span className="text-[13px] font-black text-loss leading-none shrink-0" aria-label="错">✗</span>;
+  // no_regret
+  return <span className="text-[13px] font-black text-muted-foreground leading-none shrink-0" aria-label="仍不后悔">✓</span>;
 }
 
 // ─── Bet Row ──────────────────────────────────────────────────────────────────
@@ -129,7 +198,7 @@ function BetRow({ r }: { r: BetRecord }) {
   return (
     <button onClick={() => router.push(`/records?id=${r.id}`)} className="w-full text-left">
       <div className={`flex items-center gap-3 px-3 py-3 bg-card active:opacity-60 transition-opacity border-l-2 ${leftBorder} rounded-sm`}>
-        <CompletionDot status={r.completionStatus} />
+        {outcome ? <BetOutcomeMark outcome={outcome} /> : <CompletionDot status={r.completionStatus} />}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5">
             <span className={`text-[10px] font-black shrink-0 ${GRADE_COLORS[r.grade]}`}>{r.grade}</span>
@@ -208,7 +277,7 @@ function AbandonedRow({ a }: { a: AbandonedRecord }) {
   return (
     <button onClick={() => router.push(`/records?aid=${a.id}`)} className="w-full text-left">
       <div className="flex items-center gap-3 px-3 py-2.5 bg-card/60 active:opacity-60 transition-opacity border-l-2 border-l-muted rounded-sm">
-        <CompletionDot status={a.completionStatus} />
+        {a.reviewConclusion ? <WatchOutcomeMark conclusion={a.reviewConclusion} /> : <CompletionDot status={a.completionStatus} />}
         <div className="flex-1 min-w-0 opacity-55">
           <div className="flex items-center gap-1.5">
             <p className="text-xs truncate">{a.match}</p>
@@ -526,6 +595,14 @@ function YearView({
       </div>
 
       <div className="px-4 py-3 space-y-4">
+        {yearStats.settled > 0 && (
+          <div className="border border-border rounded-md bg-card/40 px-3 pt-2 pb-3">
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">
+              周K · {year}年每周盈亏
+            </p>
+            <PnlBars data={weeklyBarsForYear(yearBets, year)} height={72} />
+          </div>
+        )}
         {hasAnyData && <AnalyticsPanel bets={yearBets} watches={yearAbandoned} />}
         {!hasAnyData ? (
           <div className="flex flex-col items-center justify-center py-16 gap-3">
@@ -665,6 +742,14 @@ function MonthListView({
       )}
 
       <div className="px-4 py-3 space-y-4">
+        {stats.settled > 0 && (
+          <div className="border border-border rounded-md bg-card/40 px-3 pt-2 pb-3">
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1.5">
+              日K · {month}月每日盈亏
+            </p>
+            <PnlBars data={dailyBarsForMonth(monthBets, year, month)} height={72} />
+          </div>
+        )}
         <AnalyticsPanel bets={monthBets} watches={monthWatches} />
         <GroupedList items={monthItems} />
       </div>

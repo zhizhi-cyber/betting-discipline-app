@@ -6,7 +6,8 @@ import { ArrowLeft, ChevronDown, ChevronUp, Star } from "lucide-react";
 import BottomNav from "@/components/bottom-nav";
 import {
   saveBetRecord, saveAbandonedRecord, getSettings, countToday,
-  getBetRecords, getAbandonedRecords,
+  getBetRecords, getAbandonedRecords, dailyBetLimitFor, calcLockState, promoteWatchToBet,
+  type LockState,
 } from "@/lib/storage";
 import type {
   HandicapValue,
@@ -189,6 +190,7 @@ function ReviewInner() {
   // Confirm & watch dialogs
   const [confirmOpen, setConfirmOpen]       = useState(false);
   const [confirmAmount, setConfirmAmount]   = useState("");
+  const [confirmMode, setConfirmMode]       = useState<"new" | "edit" | "promote">("new");
   const [watchOpen, setWatchOpen]           = useState(false);
   const [watchReason, setWatchReason]       = useState("");
 
@@ -333,7 +335,54 @@ function ReviewInner() {
 
   const handleOpenConfirm = () => {
     setConfirmAmount(suggestedAmount.toString());
+    setConfirmMode(isEditingBet ? "edit" : "new");
     setConfirmOpen(true);
+  };
+
+  const handleOpenPromote = () => {
+    setConfirmAmount(suggestedAmount.toString());
+    setConfirmMode("promote");
+    setConfirmOpen(true);
+  };
+
+  const handlePromoteFromEdit = () => {
+    if (!editOriginalWatch) return;
+    const orig = editOriginalWatch;
+    const id = `b-${Date.now()}`;
+    const amount = parseInt(confirmAmount.replace(/[^0-9]/g, ""), 10) || suggestedAmount;
+    const newBet: BetRecord = {
+      id,
+      type: "bet",
+      match: matchName || orig.match,
+      homeTeam: homeTeam || orig.homeTeam,
+      awayTeam: awayTeam || orig.awayTeam,
+      kickoffTime: kickoffTime ? normalizeKickoff(kickoffTime) : orig.kickoffTime,
+      bettingDirection: bettingDirection || orig.bettingDirection,
+      handicapSide: handicapSide || orig.handicapSide,
+      handicapValue: handicapValue || orig.handicapValue,
+      grade: finalGrade,
+      manualS: canUpgradeS && manualS ? true : undefined,
+      totalScore,
+      scores,
+      deduction,
+      bets: [{
+        id: `bs-${Date.now()}`,
+        type: betType,
+        handicapSide: handicapSide || orig.handicapSide,
+        handicapValue: handicapValue || orig.handicapValue,
+        odds: parseFloat(odds) || 0.97,
+        amount,
+        betTime: new Date().toISOString(),
+      }],
+      isDisciplineViolation: true,          // 观察转下注 = 违纪
+      completionStatus: "pristine",
+      createdAt: new Date().toISOString(),
+      convertedFromWatchId: orig.id,
+    };
+    promoteWatchToBet(orig.id, newBet);
+    setConfirmOpen(false);
+    resetAll();
+    router.push(`/records?id=${id}`);
   };
 
   const handleSaveBet = () => {
@@ -471,8 +520,11 @@ function ReviewInner() {
 
   // ─── Render ───────────────────────────────────────────────────────────────
 
-  const overLimitBet   = todayCount.bets   >= settings.riskControls.maxDailyMatches;
+  const todayBetLimit = dailyBetLimitFor(new Date(), settings);
+  const overLimitBet   = todayCount.bets   >= todayBetLimit;
   const overLimitWatch = todayCount.watches >= settings.riskControls.maxDailyWatches;
+  const lockState: LockState = useMemo(() => calcLockState(new Date(), settings), [settings, todayCount]);
+  const isLocked = lockState.locked;
 
   return (
     <div className="min-h-screen pb-28">
@@ -495,7 +547,7 @@ function ReviewInner() {
             <span>
               今日下注
               <span className={`font-mono mx-1 ${overLimitBet ? "text-loss" : "text-foreground"}`}>
-                {todayCount.bets}/{settings.riskControls.maxDailyMatches}
+                {todayCount.bets}/{todayBetLimit}
               </span>
             </span>
             <span>·</span>
@@ -904,26 +956,35 @@ function ReviewInner() {
           )}
 
           {!isEditing && (
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              <button
-                disabled={!coreReady}
-                onClick={handleOpenWatch}
-                className={`py-3 rounded font-bold text-sm ${
-                  coreReady ? "bg-muted text-foreground active:opacity-80" : "bg-muted/50 text-muted-foreground/40"
-                }`}
-              >
-                转入观察
-              </button>
-              <button
-                disabled={!coreReady || routeToWatch}
-                onClick={handleOpenConfirm}
-                className={`py-3 rounded font-bold text-sm ${
-                  coreReady && !routeToWatch ? "bg-foreground text-background active:opacity-80" : "bg-muted/50 text-muted-foreground/40"
-                }`}
-              >
-                保存下注记录
-              </button>
-            </div>
+            <>
+              {isLocked && (
+                <p className="text-[11px] text-loss mt-2 text-center">
+                  ⚠ {lockState.reason === "monthly_drawdown"
+                    ? `月度亏损已达上限，${lockState.unlockLabel} 前强制走观察`
+                    : `今日亏损已达上限，${lockState.unlockLabel} 前强制走观察`}
+                </p>
+              )}
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  disabled={!coreReady}
+                  onClick={handleOpenWatch}
+                  className={`py-3 rounded font-bold text-sm ${
+                    coreReady ? "bg-muted text-foreground active:opacity-80" : "bg-muted/50 text-muted-foreground/40"
+                  }`}
+                >
+                  转入观察
+                </button>
+                <button
+                  disabled={!coreReady || routeToWatch || isLocked}
+                  onClick={handleOpenConfirm}
+                  className={`py-3 rounded font-bold text-sm ${
+                    coreReady && !routeToWatch && !isLocked ? "bg-foreground text-background active:opacity-80" : "bg-muted/50 text-muted-foreground/40"
+                  }`}
+                >
+                  {isLocked ? "已锁定" : "保存下注记录"}
+                </button>
+              </div>
+            </>
           )}
 
           {isEditingBet && (
@@ -947,23 +1008,41 @@ function ReviewInner() {
           )}
 
           {isEditingWatch && (
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              <button
-                onClick={() => router.back()}
-                className="py-3 rounded font-bold text-sm bg-muted text-foreground active:opacity-80"
-              >
-                取消
-              </button>
-              <button
-                disabled={!coreReady}
-                onClick={handleSaveWatchEdit}
-                className={`py-3 rounded font-bold text-sm ${
-                  coreReady ? "bg-foreground text-background active:opacity-80" : "bg-muted/50 text-muted-foreground/40"
-                }`}
-              >
-                保存修改
-              </button>
-            </div>
+            <>
+              {editOriginalWatch?.promotedToBetId && (
+                <p className="text-[11px] text-warning mt-2 text-center">
+                  此观察已补录为下注，无法再次转换
+                </p>
+              )}
+              <div className="grid grid-cols-2 gap-2 pt-1">
+                <button
+                  onClick={() => router.back()}
+                  className="py-3 rounded font-bold text-sm bg-muted text-foreground active:opacity-80"
+                >
+                  取消
+                </button>
+                <button
+                  disabled={!coreReady}
+                  onClick={handleSaveWatchEdit}
+                  className={`py-3 rounded font-bold text-sm ${
+                    coreReady ? "bg-muted text-foreground active:opacity-80" : "bg-muted/50 text-muted-foreground/40"
+                  }`}
+                >
+                  保存观察
+                </button>
+              </div>
+              {!editOriginalWatch?.promotedToBetId && (
+                <button
+                  disabled={!coreReady || isLocked}
+                  onClick={handleOpenPromote}
+                  className={`w-full mt-2 py-3 rounded font-bold text-sm ${
+                    coreReady && !isLocked ? "bg-foreground text-background active:opacity-80" : "bg-muted/50 text-muted-foreground/40"
+                  }`}
+                >
+                  {isLocked ? "已锁定 · 不可改为下注" : "↑ 改为下注（违纪标记）"}
+                </button>
+              )}
+            </>
           )}
         </section>
       </div>
@@ -978,8 +1057,13 @@ function ReviewInner() {
           <div className="fixed inset-0 z-50 bg-background/80 flex items-end">
             <div className="w-full bg-card border-t border-border px-4 py-5 space-y-3 max-w-[430px] mx-auto max-h-[85vh] overflow-y-auto">
               <p className="text-sm font-bold">
-                {isEditingBet ? "确认修改" : "确认下注"}
+                {confirmMode === "promote" ? "将观察改为下注（违纪）" : isEditingBet ? "确认修改" : "确认下注"}
               </p>
+              {confirmMode === "promote" && (
+                <p className="text-[11px] text-warning">
+                  这条观察之前是判断为&ldquo;应观察不下注&rdquo;，改为下注将自动标记为违纪单。
+                </p>
+              )}
               {preview && (
                 <div className="rounded-md bg-muted px-4 py-3">
                   <p className="text-base font-bold font-mono">{preview}</p>
@@ -990,7 +1074,14 @@ function ReviewInner() {
                 inputMode="numeric"
                 className="w-full bg-muted rounded px-3 py-3 text-lg font-mono outline-none" />
               {!isEditingBet && overLimitBet && (
-                <p className="text-[11px] text-loss">⚠ 今日下注已达上限 {todayCount.bets}/{settings.riskControls.maxDailyMatches}</p>
+                <p className="text-[11px] text-loss">⚠ 今日下注已达上限 {todayCount.bets}/{todayBetLimit}</p>
+              )}
+              {!isEditingBet && isLocked && (
+                <p className="text-[11px] text-loss font-semibold">
+                  ⚠ {lockState.reason === "monthly_drawdown"
+                    ? `月度亏损已达上限，${lockState.unlockLabel} 前不可下注`
+                    : `今日亏损已达上限，${lockState.unlockLabel} 前强制走观察`}
+                </p>
               )}
               {isEditingBet && amountChanged && hadResult && (
                 <div className="rounded border border-loss/40 bg-loss/10 px-3 py-2">
@@ -1007,9 +1098,15 @@ function ReviewInner() {
                   我已知晓，继续
                 </button>
               ) : (
-                <button onClick={isEditingBet ? handleSaveBetEdit : handleSaveBet}
-                  className="w-full py-3 rounded font-bold text-sm bg-foreground text-background">
-                  {isEditingBet ? "确认保存修改" : "确认保存下注记录"}
+                <button
+                  onClick={
+                    confirmMode === "promote" ? handlePromoteFromEdit
+                    : isEditingBet ? handleSaveBetEdit
+                    : handleSaveBet
+                  }
+                  className="w-full py-3 rounded font-bold text-sm bg-foreground text-background"
+                >
+                  {confirmMode === "promote" ? "确认改为下注" : isEditingBet ? "确认保存修改" : "确认保存下注记录"}
                 </button>
               )}
               <button onClick={() => { setConfirmOpen(false); setEditAmountWarningShown(false); }}

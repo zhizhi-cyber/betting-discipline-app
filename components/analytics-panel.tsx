@@ -1,8 +1,12 @@
 "use client";
 
-import { Target, Trophy, Shield, Flame, Eye, AlertCircle } from "lucide-react";
+import { Target, Trophy, Shield, Flame, Eye, AlertCircle, Sparkles } from "lucide-react";
 import type { BetRecord, AbandonedRecord } from "@/lib/types";
-import { calcRecordsAnalytics } from "@/lib/storage";
+import { calcRecordsAnalytics, calcGradeWinRates } from "@/lib/storage";
+
+const GRADE_COLORS: Record<string, string> = {
+  S: "text-[#f5c842]", A: "text-[#b8a0e8]", B: "text-[#6ea8d8]", C: "text-warning",
+};
 
 /**
  * Records-page analytics: overview bar + handicap ROI bars + error top3
@@ -18,6 +22,8 @@ export default function AnalyticsPanel({
   if (bets.length === 0 && watches.length === 0) return null;
 
   const a = calcRecordsAnalytics(bets, watches);
+  const gradeRates = calcGradeWinRates(bets);
+  const anyGradeSample = gradeRates.some((g) => g.sample > 0);
 
   return (
     <div className="space-y-3">
@@ -48,6 +54,31 @@ export default function AnalyticsPanel({
           accent={a.streak.type === "win" ? "profit" : a.streak.type === "loss" ? "loss" : "muted"}
         />
       </div>
+
+      {/* Grade win-rate breakdown — 4 tiles (S A B C) */}
+      {anyGradeSample && (
+        <GlassCard title="信心级别胜率" icon={<Sparkles size={10} strokeWidth={2} />}>
+          <div className="grid grid-cols-4 gap-2">
+            {gradeRates.map((g) => {
+              const hasSample = g.sample > 0;
+              const rateCls = !hasSample ? "text-muted-foreground/40"
+                : g.rate >= 50 ? "text-profit" : "text-loss";
+              return (
+                <div key={g.grade} className="text-center">
+                  <p className={`text-[11px] font-black ${GRADE_COLORS[g.grade]}`}>{g.grade}</p>
+                  <p className={`text-sm font-black font-mono tabular-nums mt-0.5 ${rateCls}`}>
+                    {hasSample ? `${g.rate.toFixed(0)}%` : "—"}
+                  </p>
+                  <p className="text-[9px] text-muted-foreground/70 font-mono mt-0.5">
+                    {hasSample ? `${g.sample}场` : "无样本"}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+          <p className="text-[9px] text-muted-foreground/50 mt-2">赢半计 0.5 · 走不计入</p>
+        </GlassCard>
+      )}
 
       {/* Handicap ROI + Error top — two column */}
       {(a.handicapRoi.length > 0 || a.errorTop.length > 0) && (

@@ -166,14 +166,24 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
           </button>
           <span className="font-semibold text-sm">观察详情</span>
           <div className="flex items-center gap-1">
-            <button onClick={() => router.push(`/review?editWatch=${record.id}`)} className="text-muted-foreground p-1" aria-label="编辑">
-              <Pencil size={14} />
-            </button>
-            <button onClick={() => setDeleteConfirm(true)} className="text-muted-foreground/50 p-1 -mr-1">
-              <Trash2 size={14} />
-            </button>
+            {!alreadyPromoted && (
+              <>
+                <button onClick={() => router.push(`/review?editWatch=${record.id}`)} className="text-muted-foreground p-1" aria-label="编辑">
+                  <Pencil size={14} />
+                </button>
+                <button onClick={() => setDeleteConfirm(true)} className="text-muted-foreground/50 p-1 -mr-1">
+                  <Trash2 size={14} />
+                </button>
+              </>
+            )}
           </div>
         </div>
+        {alreadyPromoted && (
+          <div className="px-4 pb-2 text-[11px] text-warning flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" />
+            此观察已补录为下注，不可编辑或删除（需先删除对应下注记录）
+          </div>
+        )}
       </div>
 
       {deleteConfirm && (

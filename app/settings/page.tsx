@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
-import { ArrowLeft, Download, Upload } from "lucide-react";
-import { DEFAULT_SETTINGS, getSettings, saveSettings, exportAllData, importAllData, type AppSettings } from "@/lib/storage";
+import { ArrowLeft, Download, Upload, Trash2 } from "lucide-react";
+import { DEFAULT_SETTINGS, getSettings, saveSettings, exportAllData, importAllData, resetAllData, type AppSettings } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
 
@@ -11,6 +11,7 @@ import { useToast } from "@/components/toast";
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [resetConfirm, setResetConfirm] = useState(false);
   const { show: showToast, node: toastNode } = useToast();
 
   useEffect(() => {
@@ -114,11 +115,22 @@ export default function SettingsPage() {
           <SectionLabel>风控设置</SectionLabel>
           <div className="border border-border rounded-md overflow-hidden divide-y divide-border">
             <SettingRow
-              label="每日下注上限"
-              value={settings.riskControls.maxDailyMatches}
+              label="每日下注上限（周中）"
+              value={settings.riskControls.maxDailyMatchesWeekday ?? settings.riskControls.maxDailyMatches}
               suffix="场"
-              desc="纪律要求：1-3 场；观察池不占用此额度"
-              onChange={(v) => update("riskControls")("maxDailyMatches", v)}
+              desc="周一至周五每日上限"
+              onChange={(v) => {
+                update("riskControls")("maxDailyMatchesWeekday", v);
+                update("riskControls")("maxDailyMatches", v);
+              }}
+              isInteger
+            />
+            <SettingRow
+              label="每日下注上限（周末）"
+              value={settings.riskControls.maxDailyMatchesWeekend ?? 3}
+              suffix="场"
+              desc="周六周日每日上限"
+              onChange={(v) => update("riskControls")("maxDailyMatchesWeekend", v)}
               isInteger
             />
             <SettingRow
@@ -133,14 +145,14 @@ export default function SettingsPage() {
               label="单日亏损线"
               value={settings.riskControls.dailyLossLimit}
               prefix="¥"
-              desc="亏损超过此金额停止下注"
+              desc="当日累计亏损达到后，剩余场次强制走观察"
               onChange={(v) => update("riskControls")("dailyLossLimit", v)}
             />
             <SettingRow
-              label="月度最大回撤"
+              label="月度亏损上限"
               value={settings.riskControls.monthlyMaxDrawdown}
               prefix="¥"
-              desc="月度亏损超过此金额停止"
+              desc="当月累计亏损达到后，强制锁 7 天（跨月重置）"
               onChange={(v) => update("riskControls")("monthlyMaxDrawdown", v)}
             />
           </div>
@@ -234,6 +246,48 @@ export default function SettingsPage() {
             重装应用前请先导出备份。重装后在新图标里打开此页,点"从 JSON 文件恢复"即可。
           </p>
         </section>
+
+        {/* ── Danger Zone ──────────────────────────────────────────── */}
+        <section>
+          <SectionLabel>危险操作</SectionLabel>
+          <div className="border border-loss/30 rounded-md overflow-hidden">
+            <button
+              onClick={() => setResetConfirm(true)}
+              className="w-full px-4 py-3 bg-card flex items-center justify-between active:opacity-70"
+            >
+              <div className="flex items-center gap-2">
+                <Trash2 size={14} className="text-loss" />
+                <span className="text-xs font-medium text-loss">重置所有数据</span>
+              </div>
+              <span className="text-[10px] text-muted-foreground">不可恢复</span>
+            </button>
+          </div>
+          <p className="text-[10px] text-muted-foreground/60 mt-2 leading-relaxed">
+            清空所有下注 / 观察记录和设置，恢复到全新状态。建议先导出备份再重置。
+          </p>
+        </section>
+
+        {resetConfirm && (
+          <div className="fixed inset-0 z-50 bg-background/80 flex items-end">
+            <div className="w-full bg-card border-t border-border px-4 py-5 space-y-3 max-w-[430px] mx-auto">
+              <p className="text-sm font-bold text-loss">确认重置所有数据？</p>
+              <p className="text-xs text-muted-foreground">将清空所有下注记录、观察记录和自定义设置，此操作无法撤销。</p>
+              <button
+                onClick={() => {
+                  resetAllData();
+                  setResetConfirm(false);
+                  setTimeout(() => location.reload(), 300);
+                }}
+                className="w-full py-3 rounded font-bold text-sm bg-loss text-white"
+              >
+                确认清空
+              </button>
+              <button onClick={() => setResetConfirm(false)} className="w-full py-2 text-xs text-muted-foreground">
+                取消
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ── About ────────────────────────────────────────────────── */}
         <section>

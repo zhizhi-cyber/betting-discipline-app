@@ -190,10 +190,12 @@ export interface Goals {
 }
 
 export interface RiskControls {
-  maxDailyMatches: number;     // 每日下注上限
-  maxDailyWatches: number;     // 每日观察上限 (新)
-  dailyLossLimit: number;
-  monthlyMaxDrawdown: number;
+  maxDailyMatches: number;         // 旧字段（保留向后兼容，周中默认用它）
+  maxDailyMatchesWeekday?: number; // 周一-周五 每日下注上限
+  maxDailyMatchesWeekend?: number; // 周六日 每日下注上限
+  maxDailyWatches: number;         // 每日观察上限
+  dailyLossLimit: number;          // 当日累计亏损触达后当天强制走观察
+  monthlyMaxDrawdown: number;      // 月度累计亏损触达后锁一周（跨月重置）
 }
 
 export interface GradeAmounts {
@@ -308,11 +310,13 @@ export function formatSidedHandicap(
   awayTeam: string,
 ): string {
   if (!sided.side || sided.values.length === 0) return "";
+  // sided.side = 让球方（给出让球的那一方 / 强队视角）
+  // 按亚盘惯例，让球方显示负号：例如主让 0.75 → "主队 -0.75"
   const team = sided.side === "home" ? (homeTeam || "主队") : (awayTeam || "客队");
   const parts = sided.values.map((v) => {
     const n = parseFloat(v);
     if (isNaN(n) || n === 0) return "0";
-    return `+${v}`;
+    return `-${v}`;
   });
   return `${team} ${parts.join(" / ")}`;
 }
@@ -333,6 +337,10 @@ export const ERROR_OPTIONS: string[] = [
   "不该下却下了",
   "应转观察却下了",
 ];
+
+export const DECISION_RATING_LABELS: Record<number, string> = {
+  1: "差", 2: "勉强", 3: "尚可", 4: "良好", 5: "优秀",
+};
 
 export const POSITIVE_OPTIONS: string[] = [
   "基本面判断准确",

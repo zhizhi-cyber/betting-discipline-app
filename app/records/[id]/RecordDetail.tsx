@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronUp, Trash2, Star, Pencil } from "lucide-react";
 import type { Outcome, BetRecord, AnalysisVerdict, ScoreData, SidedHandicap } from "@/lib/types";
-import { calcPnl, getTotalBetAmount, SUBDIMS, formatBetPreview, formatSidedHandicap, ERROR_OPTIONS, POSITIVE_OPTIONS, parseKickoff } from "@/lib/types";
+import { calcPnl, getTotalBetAmount, SUBDIMS, formatBetPreview, formatSidedHandicap, ERROR_OPTIONS, POSITIVE_OPTIONS, parseKickoff, DECISION_RATING_LABELS } from "@/lib/types";
 import { getBetRecords, saveBetRecord, deleteBetRecord } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
@@ -441,10 +441,13 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
 
             {/* Decision rating — red stars (盈利色, different from yellow confidence stars) */}
             <div className="rounded-md border border-border bg-card p-3">
-              <div className="flex items-baseline justify-between mb-2">
+              <div className="flex items-baseline justify-between mb-1.5">
                 <p className="text-[11px] font-bold text-foreground">本场决策总评</p>
                 <span className="text-[10px] text-muted-foreground/60">非必要</span>
               </div>
+              <p className="text-[10px] text-muted-foreground/70 mb-2">
+                1 差 · 2 勉强 · 3 尚可 · 4 良好 · 5 优秀
+              </p>
               <div className="flex items-center gap-2">
                 <div className="flex items-center gap-1">
                   {[1, 2, 3, 4, 5].map((n) => {
@@ -462,7 +465,7 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
                   })}
                 </div>
                 <span className="text-[10px] text-muted-foreground ml-1">
-                  {decisionRating === 0 ? "未评" : `${decisionRating}/5`}
+                  {decisionRating === 0 ? "未评" : `${decisionRating}/5 · ${DECISION_RATING_LABELS[decisionRating]}`}
                 </span>
               </div>
             </div>

@@ -4,11 +4,11 @@ import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Plus, Settings, ChevronRight, Target, Activity, TrendingUp } from "lucide-react";
-import { AreaChart, Area, ResponsiveContainer, YAxis } from "recharts";
 import { motion, useMotionValue, useTransform, animate } from "motion/react";
 import { getTotalPnl, getTotalBetAmount, type Outcome, type ReviewConclusion, type BetRecord, type AbandonedRecord } from "@/lib/mock-data";
-import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, calcYearStats, calcWeekStats, calcAllTimeStats, syncPendingReview, countToday } from "@/lib/storage";
+import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, calcYearStats, calcWeekStats, calcAllTimeStats, syncPendingReview, countToday, dailyBetLimitFor, calcLockState, calcDailyPnlSeries, calcWeeklyPnlSeries, type LockState } from "@/lib/storage";
 import { calcPnl, weekStart, weekEnd, matchDayKey, matchDayStart, parseKickoff, formatBetDirection } from "@/lib/types";
+import PnlBars from "@/components/pnl-bars";
 // Hero combines PnL and goal tracking; home orchestrates glass UI accented with sparkline + halo.
 import BottomNav from "@/components/bottom-nav";
 
@@ -97,9 +97,10 @@ export default function HomePage() {
   const [stats, setStats] = useState({ totalPnl: 0, totalBet: 0, roi: 0, count: 0, pendingReviewCount: 0 });
   const [target, setTarget] = useState(0);
   const [todayCount, setTodayCount] = useState({ bets: 0, watches: 0 });
-  const [dailyLimits, setDailyLimits] = useState({ bets: 3, watches: 3 });
+  const [dailyLimits, setDailyLimits] = useState({ bets: 2, watches: 3 });
   const [allBets, setAllBets] = useState<BetRecord[]>([]);
   const [allAbandoned, setAllAbandoned] = useState<AbandonedRecord[]>([]);
+  const [lockState, setLockState] = useState<LockState | null>(null);
 
   // Initial load
   useEffect(() => {
@@ -107,12 +108,13 @@ export default function HomePage() {
     const settings = getSettings();
     setTimeRange(settings.displayPrefs.defaultTimeRange);
     setDailyLimits({
-      bets: settings.riskControls.maxDailyMatches,
+      bets: dailyBetLimitFor(new Date(), settings),
       watches: settings.riskControls.maxDailyWatches,
     });
     setTodayCount(countToday());
     setAllBets(getBetRecords());
     setAllAbandoned(getAbandonedRecords());
+    setLockState(calcLockState(new Date(), settings));
     setMounted(true);
   }, []);
 
@@ -194,7 +196,10 @@ export default function HomePage() {
 
   const yesterdayStats = useMemo(() => {
     const bets = allBets.filter((r) => matchDayKey(r.kickoffTime) === yesterdayKey);
-    const watches = allAbandoned.filter((r) => matchDayKey(r.kickoffTime) === yesterdayKey);
+    // Exclude watches that have already been promoted to bets (avoid double-count)
+    const watches = allAbandoned.filter(
+      (r) => matchDayKey(r.kickoffTime) === yesterdayKey && !r.promotedToBetId
+    );
     let pnl = 0;
     let settled = 0, unsettled = 0;
     for (const r of bets) {
@@ -208,35 +213,16 @@ export default function HomePage() {
     return { bets: bets.length, watches: watches.length, pnl, settled, unsettled };
   }, [allBets, allAbandoned, yesterdayKey]);
 
-  // Sparkline — daily PnL (running sum) grouped by match-day over window
-  const sparkData = useMemo(() => {
-    let days = 7;
-    if (timeRange === "month") days = 30;
-    else if (timeRange === "year") days = 90;
-    else if (timeRange === "all") days = 90;
-
-    const anchor = matchDayStart(new Date());
-    const daily: { key: string; pnl: number }[] = [];
-    for (let i = days - 1; i >= 0; i--) {
-      const d = new Date(anchor);
-      d.setDate(d.getDate() - i);
-      const y = d.getFullYear();
-      const m = String(d.getMonth() + 1).padStart(2, "0");
-      const dd = String(d.getDate()).padStart(2, "0");
-      const key = `${y}-${m}-${dd}`;
-      let dayPnl = 0;
-      for (const r of allBets) {
-        if (!r.result) continue;
-        if (matchDayKey(r.kickoffTime) !== key) continue;
-        dayPnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, r.result!.outcome), 0);
-      }
-      daily.push({ key, pnl: dayPnl });
-    }
-    let running = 0;
-    return daily.map((d) => ({ ...d, cum: (running += d.pnl) }));
+  // PnL bars — per-day (week/month) or per-week (year/all)
+  const barData = useMemo(() => {
+    void allBets; // trigger recompute on allBets change
+    if (timeRange === "week") return calcDailyPnlSeries(7);
+    if (timeRange === "month") return calcDailyPnlSeries(30);
+    if (timeRange === "year") return calcWeeklyPnlSeries(52);
+    return calcWeeklyPnlSeries(52);
   }, [allBets, timeRange]);
 
-  const hasSparkData = sparkData.some((d) => d.pnl !== 0);
+  const hasSparkData = barData.some((d) => d.pnl !== 0);
 
   const rangeStatLabel = timeRange === "week" ? "本周" : timeRange === "month" ? "本月" : timeRange === "year" ? "本年" : "历史";
   const overBet = todayCount.bets >= dailyLimits.bets;
@@ -253,6 +239,25 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen pb-28">
+
+      {/* ── Lock Banner ─────────────────────────────────────────── */}
+      {lockState?.locked && (
+        <div className="bg-loss/15 border-b border-loss/30 px-4 py-2.5">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-loss animate-pulse shrink-0" />
+            <p className="text-xs font-semibold text-loss flex-1">
+              {lockState.reason === "monthly_drawdown"
+                ? `月度亏损已达上限，${lockState.unlockLabel} 前不可下注`
+                : `今日亏损已达上限，${lockState.unlockLabel} 前强制走观察`}
+            </p>
+          </div>
+          <p className="text-[10px] text-loss/70 mt-0.5 ml-4">
+            {lockState.reason === "monthly_drawdown"
+              ? `当月累计 ${lockState.monthlyPnl.toLocaleString()} / 上限 -¥${lockState.monthlyMaxDrawdown.toLocaleString()}`
+              : `今日累计 ${lockState.dailyPnl.toLocaleString()} / 上限 -¥${lockState.dailyLossLimit.toLocaleString()}`}
+          </p>
+        </div>
+      )}
 
       {/* ── Pending Review Alert ────────────────────────────────── */}
       {stats.pendingReviewCount > 0 && (
@@ -285,22 +290,10 @@ export default function HomePage() {
           transition={{ duration: 0.4, ease: "easeOut" }}
           className="relative rounded-2xl overflow-hidden border border-white/[0.06] bg-card/40 backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.35)]"
         >
-          {/* Sparkline as ambient bottom layer */}
+          {/* PnL bars as ambient bottom layer */}
           {hasSparkData && (
-            <div className="absolute inset-x-0 bottom-0 h-20 pointer-events-none opacity-50">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={sparkData} margin={{ top: 4, right: 0, bottom: 0, left: 0 }}>
-                  <defs>
-                    <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={isProfit ? profitColor : lossColor} stopOpacity={0.3} />
-                      <stop offset="100%" stopColor={isProfit ? profitColor : lossColor} stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <YAxis hide domain={["dataMin", "dataMax"]} />
-                  <Area type="monotone" dataKey="cum" stroke={isProfit ? profitColor : lossColor}
-                    strokeWidth={1.5} fill="url(#sparkFill)" />
-                </AreaChart>
-              </ResponsiveContainer>
+            <div className="absolute inset-x-0 bottom-0 h-16 pointer-events-none opacity-60 px-2">
+              <PnlBars data={barData} height={64} />
             </div>
           )}
 

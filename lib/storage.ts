@@ -24,10 +24,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
     yearlyTarget:  200000,
   },
   riskControls: {
-    maxDailyMatches:    3,
-    maxDailyWatches:    3,
-    dailyLossLimit:     15000,
-    monthlyMaxDrawdown: 50000,
+    maxDailyMatches:         2,
+    maxDailyMatchesWeekday:  2,
+    maxDailyMatchesWeekend:  3,
+    maxDailyWatches:         3,
+    dailyLossLimit:          15000,
+    monthlyMaxDrawdown:      50000,
   },
   gradeAmounts: {
     C: 6000,
@@ -272,6 +274,197 @@ export function countToday(): { bets: number; watches: number } {
   const bets = getBetRecords().filter((r) => matchDayKey(r.kickoffTime) === todayKey).length;
   const watches = getAbandonedRecords().filter((r) => matchDayKey(r.kickoffTime) === todayKey).length;
   return { bets, watches };
+}
+
+// ─── Daily bet limit based on weekday ─────────────────────────────────────────
+// Uses match-day anchor (10am boundary) to decide which weekday we're on.
+export function dailyBetLimitFor(date: Date = new Date(), settings?: AppSettings): number {
+  const s = settings ?? getSettings();
+  const rc = s.riskControls;
+  const anchor = matchDayStart(date);
+  const dow = anchor.getDay(); // 0=Sun, 6=Sat
+  const isWeekend = dow === 0 || dow === 6;
+  const weekday = rc.maxDailyMatchesWeekday ?? rc.maxDailyMatches ?? 2;
+  const weekend = rc.maxDailyMatchesWeekend ?? rc.maxDailyMatches ?? 3;
+  return isWeekend ? weekend : weekday;
+}
+
+// ─── Lock computation ─────────────────────────────────────────────────────────
+// Returns whether betting is currently locked and the reason.
+// - daily: accumulated PnL on today's match-day ≤ -dailyLossLimit → lock until next 10am
+// - monthly: current-calendar-month cumulative PnL ≤ -monthlyMaxDrawdown → lock 7 days (capped to month end)
+
+export interface LockState {
+  locked: boolean;
+  reason: "daily_loss" | "monthly_drawdown" | null;
+  dailyPnl: number;
+  monthlyPnl: number;
+  dailyLossLimit: number;
+  monthlyMaxDrawdown: number;
+  unlockAt?: string;          // ISO; when lock ends
+  unlockLabel?: string;       // human readable
+}
+
+export function calcLockState(now: Date = new Date(), settings?: AppSettings): LockState {
+  const s = settings ?? getSettings();
+  const rc = s.riskControls;
+  const todayKey = matchDayKey(now);
+  const bets = getBetRecords();
+
+  // Daily PnL = sum of settled bet PnL whose match-day === todayKey
+  let dailyPnl = 0;
+  for (const r of bets) {
+    if (!r.result) continue;
+    if (matchDayKey(r.kickoffTime) !== todayKey) continue;
+    dailyPnl += r.bets.reduce((acc, b) => acc + calcPnl(b.amount, b.odds, r.result!.outcome), 0);
+  }
+
+  // Monthly cumulative PnL — calendar month of `now`, by match-day
+  const y = now.getFullYear();
+  const m = now.getMonth();
+  let monthlyPnl = 0;
+  for (const r of bets) {
+    if (!r.result) continue;
+    const d = matchDayStart(r.kickoffTime);
+    if (d.getFullYear() !== y || d.getMonth() !== m) continue;
+    monthlyPnl += r.bets.reduce((acc, b) => acc + calcPnl(b.amount, b.odds, r.result!.outcome), 0);
+  }
+
+  const state: LockState = {
+    locked: false, reason: null,
+    dailyPnl, monthlyPnl,
+    dailyLossLimit: rc.dailyLossLimit,
+    monthlyMaxDrawdown: rc.monthlyMaxDrawdown,
+  };
+
+  // Monthly takes priority (stronger lock)
+  if (rc.monthlyMaxDrawdown > 0 && monthlyPnl <= -rc.monthlyMaxDrawdown) {
+    state.locked = true;
+    state.reason = "monthly_drawdown";
+    // 7-day lock, capped to month end
+    const unlock = new Date(now);
+    unlock.setDate(unlock.getDate() + 7);
+    const monthEnd = new Date(y, m + 1, 1); // first day of next month at 00:00
+    if (unlock > monthEnd) unlock.setTime(monthEnd.getTime());
+    state.unlockAt = unlock.toISOString();
+    state.unlockLabel = `${unlock.getMonth() + 1}月${unlock.getDate()}日`;
+    return state;
+  }
+
+  if (rc.dailyLossLimit > 0 && dailyPnl <= -rc.dailyLossLimit) {
+    state.locked = true;
+    state.reason = "daily_loss";
+    // Unlock at next match-day start (tomorrow 10:00)
+    const anchor = matchDayStart(now);
+    anchor.setDate(anchor.getDate() + 1);
+    state.unlockAt = anchor.toISOString();
+    state.unlockLabel = "明日 10:00";
+    return state;
+  }
+
+  return state;
+}
+
+// ─── Grade win-rate breakdown ─────────────────────────────────────────────────
+// Half-win counts 0.5; push excluded from denominator.
+
+export interface GradeWinRate {
+  grade: "S" | "A" | "B" | "C";
+  rate: number;      // 0-100; NaN if n=0
+  sample: number;    // settled-minus-push
+  total: number;     // all settled incl push
+}
+
+export function calcGradeWinRates(bets: BetRecord[]): GradeWinRate[] {
+  const result: Record<string, { wins: number; sample: number; total: number }> = {
+    S: { wins: 0, sample: 0, total: 0 },
+    A: { wins: 0, sample: 0, total: 0 },
+    B: { wins: 0, sample: 0, total: 0 },
+    C: { wins: 0, sample: 0, total: 0 },
+  };
+  for (const r of bets) {
+    if (!r.result) continue;
+    const bucket = result[r.grade];
+    if (!bucket) continue;
+    bucket.total++;
+    const o = r.result.outcome;
+    if (o === "push") continue;
+    bucket.sample++;
+    if (o === "win") bucket.wins += 1;
+    else if (o === "half_win") bucket.wins += 0.5;
+    else if (o === "half_loss") bucket.wins += 0; // treat as partial loss = 0
+  }
+  const order: ("S" | "A" | "B" | "C")[] = ["S", "A", "B", "C"];
+  return order.map((g) => {
+    const b = result[g];
+    return {
+      grade: g,
+      rate: b.sample > 0 ? (b.wins / b.sample) * 100 : NaN,
+      sample: b.sample,
+      total: b.total,
+    };
+  });
+}
+
+// ─── Daily PnL series (for bar chart) ─────────────────────────────────────────
+// Returns array of { key: yyyy-mm-dd, pnl } grouped by match-day, length === days.
+// `endAnchor` is the right-edge match-day anchor (today by default).
+export function calcDailyPnlSeries(days: number, endAnchor: Date = matchDayStart(new Date())): { key: string; pnl: number }[] {
+  const bets = getBetRecords();
+  const out: { key: string; pnl: number }[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const d = new Date(endAnchor);
+    d.setDate(d.getDate() - i);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const key = `${y}-${m}-${dd}`;
+    let pnl = 0;
+    for (const r of bets) {
+      if (!r.result) continue;
+      if (matchDayKey(r.kickoffTime) !== key) continue;
+      pnl += r.bets.reduce((acc, b) => acc + calcPnl(b.amount, b.odds, r.result!.outcome), 0);
+    }
+    out.push({ key, pnl });
+  }
+  return out;
+}
+
+// ─── Weekly PnL series (for year view bar chart) ──────────────────────────────
+// Returns 52 bars ending at the ISO-week containing `endDate`.
+export function calcWeeklyPnlSeries(weeks: number, endDate: Date = new Date()): { key: string; pnl: number }[] {
+  const bets = getBetRecords();
+  // Anchor to Monday 10:00 of current week
+  const ws = weekStart(endDate);
+  ws.setHours(10, 0, 0, 0);
+  const out: { key: string; pnl: number }[] = [];
+  for (let i = weeks - 1; i >= 0; i--) {
+    const start = new Date(ws);
+    start.setDate(start.getDate() - i * 7);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 7);
+    const y = start.getFullYear();
+    const m = String(start.getMonth() + 1).padStart(2, "0");
+    const dd = String(start.getDate()).padStart(2, "0");
+    const key = `${y}-${m}-${dd}`;
+    let pnl = 0;
+    for (const r of bets) {
+      if (!r.result) continue;
+      const a = matchDayStart(r.kickoffTime);
+      if (a < start || a >= end) continue;
+      pnl += r.bets.reduce((acc, b) => acc + calcPnl(b.amount, b.odds, r.result!.outcome), 0);
+    }
+    out.push({ key, pnl });
+  }
+  return out;
+}
+
+// ─── Reset all data ───────────────────────────────────────────────────────────
+export function resetAllData(): void {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(KEYS.BET_RECORDS);
+  localStorage.removeItem(KEYS.ABANDONED_RECORDS);
+  localStorage.removeItem(KEYS.SETTINGS);
 }
 
 // ─── Records analytics ────────────────────────────────────────────────────────
