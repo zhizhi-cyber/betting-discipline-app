@@ -60,6 +60,54 @@ export const SUBDIMS: Record<string, SubdimConfig[]> = {
   ],
 };
 
+// ─── 子维度 → 质量分映射（仅质量型维度） ────────────────────────────────────
+// 每个子维度把 A/B/C 答案映射到 0/1/2 的"质量分"（越高越好）。
+// 不在此表中的维度（fundamental / odds）视为"方向型"维度，不做质量上限锁。
+// 用户仍可在 0/1/2 三档里手动打总分，但最终 score 会被 clamp 到子维度推出的上限。
+export const SUBDIM_QUALITY: Record<string, Record<string, { A: 0|1|2; B: 0|1|2; C: 0|1|2 }>> = {
+  reliability: {
+    info:        { A: 2, B: 0, C: 1 },  // 信息：充分=好
+    clarity:     { A: 2, B: 0, C: 1 },  // 思路：清楚=好
+    margin:      { A: 2, B: 0, C: 1 },  // 安全边界：足够=好
+    impulse:     { A: 0, B: 2, C: 1 },  // 冲动：是=差（反向）
+    shouldWatch: { A: 0, B: 2, C: 1 },  // 应转观察：是=差（反向）
+  },
+  trap: {
+    trap:  { A: 2, B: 0, C: 1 },   // 诱盘嫌疑：无=好
+    juice: { A: 2, B: 0, C: 1 },   // 抽水嫌疑：无=好
+  },
+  bookie: {
+    stance:     { A: 2, B: 2, C: 0 },  // 立场清晰度：偏主/偏客都清晰=好，暧昧=0
+    direction:  { A: 2, B: 2, C: 0 },  // 庄家方向：利主/利客都清，暧昧=0
+    heatFollow: { A: 2, B: 2, C: 0 },  // 热度迎合：有立场就好
+    confidence: { A: 2, B: 1, C: 0 },  // 信心度：没疑虑=2，有疑虑=1，暧昧=0
+  },
+};
+
+/**
+ * 根据子维度答案推出该维度 score 的上限（0/1/2）。
+ * 规则：把填了的子维度质量分取向下平均（Math.floor），没填的忽略。
+ * 一个子维度都没填 → 返回 2（不做约束，允许用户自己打分）。
+ * 避免用户"子维度选全差但总分拍 2"的自欺。
+ */
+export function scoreCapFromSubdims(
+  catKey: keyof ScoreData,
+  subdims: Record<string, SubdimChoice>,
+): 0 | 1 | 2 {
+  const table = SUBDIM_QUALITY[catKey];
+  if (!table) return 2; // fundamental / odds 不锁
+  const vals: number[] = [];
+  for (const [subKey, mapping] of Object.entries(table)) {
+    const ch = subdims?.[subKey];
+    if (ch === "A" || ch === "B" || ch === "C") vals.push(mapping[ch]);
+  }
+  if (vals.length === 0) return 2;
+  const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
+  // 向下取整做上限
+  const cap = Math.floor(avg);
+  return (cap <= 0 ? 0 : cap >= 2 ? 2 : 1);
+}
+
 // ─── Score ────────────────────────────────────────────────────────────────────
 
 export interface ScoreItemData {
@@ -138,7 +186,14 @@ export interface BetRecord {
   scores: ScoreData;
   deduction: HandicapDeduction;
   bets: BetSlip[];
+  // 变盘记录（选填，专业复盘用）：初盘 vs 临开赛盘
+  // 用于算"变盘方向"（升盘/降盘）、水位偏移幅度，比子维度打 A/B/C 更客观
+  openHandicap?: string;          // 初盘让球数，如 "0.5"
+  openOdds?: number;              // 初盘水位
+  closeHandicap?: string;         // 临开赛盘让球数
+  closeOdds?: number;             // 临开赛盘水位
   isDisciplineViolation: boolean;
+  violationReason?: string;       // 违纪原因（如：观察转下注 / 超建议金额 / 硬门槛未过）
   result?: {
     outcome: Outcome;
     errors: string[];
@@ -219,12 +274,22 @@ export interface AppSettings {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+/**
+ * 计算单注净盈亏。
+ * 港盘水位含义：水位即净赢倍率（100 本金 × 0.97 = 净赢 97）。
+ * 返回浮点（保留两位小数对齐到分），展示层再 round/format。
+ * 此前版本在这里就 Math.round，会让 ROI 长期漂移 0.5-1%。
+ */
 export function calcPnl(amount: number, odds: number, outcome: Outcome): number {
+  // 统一对齐到"分"精度，避免浮点尾数（如 0.1*3 = 0.30000000000000004）
+  const toCents = (v: number) => Math.round(v * 100);
+  const fromCents = (c: number) => c / 100;
+  const a = toCents(amount);
   switch (outcome) {
-    case "win":       return Math.round(amount * odds);
-    case "half_win":  return Math.round(amount * odds * 0.5);
+    case "win":       return fromCents(Math.round(a * odds));
+    case "half_win":  return fromCents(Math.round(a * odds * 0.5));
     case "push":      return 0;
-    case "half_loss": return -Math.round(amount * 0.5);
+    case "half_loss": return fromCents(-Math.round(a * 0.5));
     case "loss":      return -amount;
   }
 }
@@ -242,26 +307,51 @@ export function getTotalPnl(record: BetRecord): number | null {
 }
 
 // New thresholds: 10→A(default, S manual), 9=A, 7-8=B, 6=C, ≤5=watch
-export function gradeFromScore(totalScore: number, hardStopped: boolean, manualS?: boolean): Grade {
+// semiHardStopped = 庄家立场暧昧：在正常评级基础上再降一档（S→A, A→B, B→C, C 不再降）
+export function gradeFromScore(
+  totalScore: number,
+  hardStopped: boolean,
+  manualS?: boolean,
+  semiHardStopped?: boolean,
+): Grade {
   if (hardStopped) return "C";
-  if (totalScore === 10 && manualS) return "S";
-  if (totalScore >= 9) return "A";
-  if (totalScore >= 7) return "B";
-  if (totalScore === 6) return "C";
-  return "C"; // ≤5 should have been routed to watch
+  let g: Grade;
+  if (totalScore === 10 && manualS) g = "S";
+  else if (totalScore >= 9) g = "A";
+  else if (totalScore >= 7) g = "B";
+  else g = "C";
+  if (semiHardStopped) {
+    const step: Record<Grade, Grade> = { S: "A", A: "B", B: "C", C: "C" };
+    g = step[g];
+  }
+  return g;
 }
 
 export function shouldRouteToWatch(totalScore: number, hardStopped: boolean): boolean {
   return hardStopped || totalScore <= 5;
 }
 
-// Hard stop: any of bookie/reliability/trap = 0
+/**
+ * 硬门槛：强制转入观察、不允许下注。
+ * 仅当"可靠性 = 0"（信息不足/思路模糊）或"陷阱嫌疑 = 0"（疑似诱盘）时触发。
+ * 注：庄家立场 = 0（暧昧）不再硬停 —— 亚盘里暧昧局是常态，应走"半硬门槛"降级一档处理。
+ */
 export function isHardStopped(scores: ScoreData): boolean {
-  return scores.bookie.score === 0 || scores.reliability.score === 0 || scores.trap.score === 0;
+  return scores.reliability.score === 0 || scores.trap.score === 0;
 }
 
-export function suggestedAmount(grade: Grade, amounts: GradeAmounts): number {
-  return amounts[grade];
+/**
+ * 半硬门槛：庄家立场为 0（暧昧），不禁下但建议降级一档（且建议金额砍半）。
+ * 返回 true 表示触发降级。由 gradeFromScore / suggestedAmount 共同响应。
+ */
+export function isSemiHardStopped(scores: ScoreData): boolean {
+  return scores.bookie.score === 0;
+}
+
+export function suggestedAmount(grade: Grade, amounts: GradeAmounts, semiHardStopped?: boolean): number {
+  const base = amounts[grade];
+  // 半硬门槛：立场暧昧 → 建议金额砍半（再加个 50 元取整兜底，避免出现 12.5 这种）
+  return semiHardStopped ? Math.max(50, Math.round(base / 2 / 50) * 50) : base;
 }
 
 // Compact "team ±line" string for records list (no odds).

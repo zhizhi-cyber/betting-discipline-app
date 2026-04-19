@@ -12,6 +12,7 @@ import { useToast } from "@/components/toast";
 export default function SettingsPage() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [resetConfirm, setResetConfirm] = useState(false);
+  const [resetPhrase, setResetPhrase] = useState("");
   const { show: showToast, node: toastNode } = useToast();
 
   useEffect(() => {
@@ -250,40 +251,77 @@ export default function SettingsPage() {
         {/* ── Danger Zone ──────────────────────────────────────────── */}
         <section>
           <SectionLabel>危险操作</SectionLabel>
-          <div className="border border-loss/30 rounded-md overflow-hidden">
+          <div className="border-2 rounded-md overflow-hidden" style={{ borderColor: "#e03535" }}>
             <button
-              onClick={() => setResetConfirm(true)}
-              className="w-full px-4 py-3 bg-card flex items-center justify-between active:opacity-70"
+              onClick={() => { setResetPhrase(""); setResetConfirm(true); }}
+              className="w-full px-4 py-3 flex items-center justify-between active:opacity-70"
+              style={{ background: "#e0353514" }}
             >
               <div className="flex items-center gap-2">
-                <Trash2 size={14} className="text-loss" />
-                <span className="text-xs font-medium text-loss">重置所有数据</span>
+                <Trash2 size={14} style={{ color: "#e03535" }} />
+                <span className="text-xs font-bold" style={{ color: "#e03535" }}>重置所有数据</span>
               </div>
-              <span className="text-[10px] text-muted-foreground">不可恢复</span>
+              <span className="text-[10px] font-semibold" style={{ color: "#e03535" }}>⚠ 不可恢复</span>
             </button>
           </div>
-          <p className="text-[10px] text-muted-foreground/60 mt-2 leading-relaxed">
-            清空所有下注 / 观察记录和设置，恢复到全新状态。建议先导出备份再重置。
+          <p className="text-[10px] text-muted-foreground/70 mt-2 leading-relaxed">
+            清空所有下注 / 观察记录和设置，恢复到全新状态。<span style={{ color: "#e03535" }} className="font-semibold">请务必先导出备份</span>，否则数据将永久丢失。
           </p>
         </section>
 
         {resetConfirm && (
-          <div className="fixed inset-0 z-50 bg-background/80 flex items-end">
-            <div className="w-full bg-card border-t border-border px-4 py-5 space-y-3 max-w-[430px] mx-auto">
-              <p className="text-sm font-bold text-loss">确认重置所有数据？</p>
-              <p className="text-xs text-muted-foreground">将清空所有下注记录、观察记录和自定义设置，此操作无法撤销。</p>
+          <div className="fixed inset-0 z-50 bg-background/80 flex items-end" onClick={() => setResetConfirm(false)}>
+            <div
+              className="w-full border-t-2 px-4 py-5 space-y-3 max-w-[430px] mx-auto"
+              style={{ background: "var(--card)", borderTopColor: "#e03535" }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
+                  style={{ background: "#e0353520" }}
+                >
+                  <Trash2 size={16} style={{ color: "#e03535" }} />
+                </div>
+                <p className="text-sm font-bold" style={{ color: "#e03535" }}>确认重置所有数据？</p>
+              </div>
+              <div
+                className="text-xs leading-relaxed p-3 rounded space-y-1"
+                style={{ background: "#e0353510", border: "1px solid #e0353540" }}
+              >
+                <p className="font-semibold" style={{ color: "#e03535" }}>此操作无法撤销</p>
+                <p className="text-muted-foreground">将清空：所有下注记录、观察记录、弃场记录、复盘笔记，以及全部自定义设置。</p>
+                <p className="text-muted-foreground">若未导出备份，数据将永久丢失。</p>
+              </div>
+              <div>
+                <p className="text-[11px] text-muted-foreground mb-1.5">请输入 <span className="font-bold" style={{ color: "#e03535" }}>确认清空</span> 以继续：</p>
+                <input
+                  type="text"
+                  value={resetPhrase}
+                  onChange={(e) => setResetPhrase(e.target.value)}
+                  placeholder="确认清空"
+                  className="w-full px-3 py-2 rounded text-sm bg-muted outline-none"
+                  style={resetPhrase === "确认清空" ? { border: "1px solid #e03535" } : {}}
+                />
+              </div>
               <button
                 onClick={() => {
+                  if (resetPhrase !== "确认清空") return;
                   resetAllData();
                   setResetConfirm(false);
                   setTimeout(() => location.reload(), 300);
                 }}
-                className="w-full py-3 rounded font-bold text-sm bg-loss text-white"
+                disabled={resetPhrase !== "确认清空"}
+                className="w-full py-3 rounded font-bold text-sm text-white transition-opacity"
+                style={{
+                  background: "#e03535",
+                  opacity: resetPhrase === "确认清空" ? 1 : 0.35,
+                }}
               >
-                确认清空
+                永久清空所有数据
               </button>
               <button onClick={() => setResetConfirm(false)} className="w-full py-2 text-xs text-muted-foreground">
-                取消
+                取消（推荐）
               </button>
             </div>
           </div>

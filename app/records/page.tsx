@@ -16,6 +16,7 @@ import {
 } from "@/lib/mock-data";
 import { weekStart, weekEnd, matchDayKey, matchDayStart, formatMatchDayLabel, formatBetDirection, parseKickoff } from "@/lib/types";
 import { getBetRecords, getAbandonedRecords, getSettings, saveSettings } from "@/lib/storage";
+import { formatMoneyShort, formatSigned } from "@/lib/format";
 import BottomNav from "@/components/bottom-nav";
 import AnalyticsPanel from "@/components/analytics-panel";
 import PnlBars from "@/components/pnl-bars";
@@ -111,17 +112,20 @@ function dailyBarsForMonth(bets: BetRecord[], year: number, month: number): { ke
 }
 
 // Weekly PnL bars for a calendar year — 52 ISO weeks anchored to Monday.
+// 对于"本年度"，把尚未开始的未来周裁掉，避免右侧空柱误导。
 function weeklyBarsForYear(bets: BetRecord[], year: number): { key: string; pnl: number }[] {
-  // Find first Monday ≥ Jan 1 of year's ISO scheme; use simple approach: 52 weeks starting from first Monday of the year
   const jan1 = new Date(year, 0, 1);
   const dow = jan1.getDay();
   const diffToMon = dow === 0 ? 1 : (8 - dow) % 7;
   const firstMon = new Date(year, 0, 1 + diffToMon);
   firstMon.setHours(10, 0, 0, 0);
+  const now = new Date();
   const out: { key: string; pnl: number }[] = [];
   for (let w = 0; w < 52; w++) {
     const start = new Date(firstMon);
     start.setDate(start.getDate() + w * 7);
+    // 如果这周还没开始，后面的都不用算了
+    if (start > now) break;
     const end = new Date(start);
     end.setDate(end.getDate() + 7);
     const k = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
@@ -231,7 +235,10 @@ function BetRow({ r }: { r: BetRecord }) {
               </span>
             )}
             {r.isDisciplineViolation && (
-              <span className="text-[9px] px-1 py-0.5 rounded bg-warning/15 text-warning shrink-0">违纪</span>
+              <span
+                className="text-[9px] px-1 py-0.5 rounded bg-warning/15 text-warning shrink-0"
+                title={r.violationReason || "违纪"}
+              >违纪</span>
             )}
           </div>
           {(r.homeTeam || r.awayTeam) && (
@@ -452,8 +459,13 @@ function StatsBar({ stats, matchCount, watchCount, pnlLabel }: {
     <div className="flex items-center gap-0 divide-x divide-border border-t border-border">
       <div className="flex-1 px-3 py-2.5 text-center">
         <p className="text-[9px] text-muted-foreground uppercase tracking-wider">{pnlLabel}</p>
-        <p className={`text-sm font-black font-mono mt-0.5 ${stats.totalPnl >= 0 ? "text-profit" : "text-loss"}`}>
-          {stats.totalBet > 0 ? (stats.totalPnl >= 0 ? "+" : "") + stats.totalPnl.toLocaleString() : "—"}
+        <p className={`text-sm font-black font-mono mt-0.5 ${
+          stats.totalBet === 0 ? "text-muted-foreground/60"
+          : stats.totalPnl > 0 ? "text-profit"
+          : stats.totalPnl < 0 ? "text-loss"
+          : "text-muted-foreground"
+        }`}>
+          {stats.totalBet > 0 ? formatSigned(stats.totalPnl) : "—"}
         </p>
       </div>
       <div className="flex-1 px-3 py-2.5 text-center">
@@ -975,10 +987,10 @@ function CalendarGrid({
                 {s && s.watches > 0 && (
                   <span className="absolute bottom-1 right-1 w-1.5 h-1.5 rounded-full bg-muted-foreground/50" />
                 )}
-                {/* centered PnL */}
+                {/* centered PnL — 日历格很窄，所有金额都走短格式（千分位/万缩写） */}
                 {hasPnl ? (
                   <span className={`absolute inset-0 flex items-center justify-center text-[11px] font-black font-mono tabular-nums ${fg}`}>
-                    {pnl === 0 ? "—" : `${pnl > 0 ? "+" : ""}${Math.round(pnl / 1 >= 1000 || pnl <= -1000 ? pnl / 1 : pnl)}`}
+                    {pnl === 0 ? "±0" : formatMoneyShort(pnl)}
                   </span>
                 ) : hasActivity ? (
                   <span className="absolute inset-0 flex items-center justify-center text-[10px] text-muted-foreground/40">·</span>
@@ -988,7 +1000,7 @@ function CalendarGrid({
                 {tipKey === key && s && (
                   <div className="absolute left-1/2 -translate-x-1/2 -top-14 z-30 whitespace-nowrap bg-background border border-border rounded-md px-2 py-1.5 shadow-lg text-[10px] font-mono">
                     <div className={pnl >= 0 ? "text-profit" : "text-loss"}>
-                      {pnl === 0 ? "走水" : `${pnl > 0 ? "+" : ""}¥${Math.abs(pnl).toLocaleString()}`}
+                      {pnl === 0 ? "走水" : `${pnl > 0 ? "+" : "\u2212"}¥${Math.abs(pnl).toLocaleString()}`}
                     </div>
                     <div className="text-muted-foreground/80 text-[9px]">
                       {s.settledBets + s.unsettledBets > 0 && `${s.settledBets + s.unsettledBets}下注 `}

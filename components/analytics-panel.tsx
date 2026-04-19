@@ -31,15 +31,15 @@ export default function AnalyticsPanel({
       <div className="grid grid-cols-4 gap-2">
         <OverviewTile
           icon={<Trophy size={11} strokeWidth={2} />}
-          label="胜率"
+          label="盘面胜率"
           value={a.settledCount > 0 ? `${a.winRate.toFixed(0)}%` : "—"}
           accent={a.settledCount > 0 ? (a.winRate >= 50 ? "profit" : "loss") : "muted"}
         />
         <OverviewTile
           icon={<Target size={11} strokeWidth={2} />}
           label="ROI"
-          value={a.totalBet > 0 ? `${a.roi >= 0 ? "+" : ""}${a.roi.toFixed(0)}%` : "—"}
-          accent={a.totalBet > 0 ? (a.roi >= 0 ? "profit" : "loss") : "muted"}
+          value={a.effectiveBet > 0 ? `${a.roi >= 0 ? "+" : ""}${a.roi.toFixed(0)}%` : "—"}
+          accent={a.effectiveBet > 0 ? (a.roi >= 0 ? "profit" : "loss") : "muted"}
         />
         <OverviewTile
           icon={<Shield size={11} strokeWidth={2} />}

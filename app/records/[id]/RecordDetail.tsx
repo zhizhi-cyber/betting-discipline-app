@@ -189,6 +189,12 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
             <Chip label="开赛" value={fmtDateTime(record.kickoffTime)} />
             <Chip label="金额" value={`¥${betSlip?.amount.toLocaleString() ?? "-"}`} />
           </div>
+          {record.isDisciplineViolation && record.violationReason && (
+            <div className="mt-2 flex items-start gap-1.5 px-2.5 py-1.5 rounded bg-warning/10 border border-warning/30">
+              <span className="text-[10px] font-bold text-warning shrink-0 leading-relaxed">违纪原因</span>
+              <span className="text-[11px] text-foreground/80 leading-relaxed">{record.violationReason}</span>
+            </div>
+          )}
 
           {totalPnl !== null && (
             <div className={`mt-4 text-4xl font-black font-mono tabular-nums ${totalPnl > 0 ? "text-profit" : totalPnl < 0 ? "text-loss" : "text-neutral"}`}>
@@ -203,6 +209,53 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
             </p>
           )}
         </div>
+
+        {/* 变盘记录 */}
+        {(record.openHandicap || record.openOdds != null || record.closeHandicap || record.closeOdds != null) && (
+          <div className="border border-border rounded-md overflow-hidden bg-card">
+            <div className="px-4 py-2.5 border-b border-border">
+              <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">变盘记录</p>
+            </div>
+            <div className="px-4 py-3 space-y-1.5">
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div className="text-muted-foreground">
+                  初盘：
+                  <span className="font-mono text-foreground">
+                    {record.openHandicap || "—"}
+                    {record.openOdds != null && ` @${record.openOdds}`}
+                  </span>
+                </div>
+                <div className="text-muted-foreground">
+                  临开赛：
+                  <span className="font-mono text-foreground">
+                    {record.closeHandicap || "—"}
+                    {record.closeOdds != null && ` @${record.closeOdds}`}
+                  </span>
+                </div>
+              </div>
+              {(() => {
+                const oh = record.openHandicap ? parseFloat(record.openHandicap) : NaN;
+                const ch = record.closeHandicap ? parseFloat(record.closeHandicap) : NaN;
+                const oo = record.openOdds ?? NaN;
+                const co = record.closeOdds ?? NaN;
+                const lineDiff = !isNaN(oh) && !isNaN(ch) ? ch - oh : null;
+                const oddsDiff = !isNaN(oo) && !isNaN(co) ? co - oo : null;
+                if (lineDiff === null && oddsDiff === null) return null;
+                return (
+                  <div className="text-[11px] text-muted-foreground pt-1 border-t border-border/50">
+                    {lineDiff !== null && (
+                      <span>让球：{lineDiff > 0 ? `升盘 +${lineDiff.toFixed(2)}` : lineDiff < 0 ? `降盘 \u2212${Math.abs(lineDiff).toFixed(2)}` : "未变"}</span>
+                    )}
+                    {lineDiff !== null && oddsDiff !== null && <span className="mx-1.5 opacity-40">·</span>}
+                    {oddsDiff !== null && (
+                      <span>水位：{oddsDiff > 0 ? `升 +${oddsDiff.toFixed(2)}` : oddsDiff < 0 ? `降 \u2212${Math.abs(oddsDiff).toFixed(2)}` : "未变"}</span>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
 
         {/* Handicap deduction */}
         {hasDeduction && (

@@ -471,11 +471,14 @@ export function resetAllData(): void {
 // Scoped analytics for a given bet+watch list (already filtered by time range).
 
 export interface RecordsAnalytics {
-  winRate: number;              // % of settled bets that are win / half_win (push counts 0.5)
+  // 盘面胜率：剔除走盘（push）后的胜率；半赢 = 0.5 胜、半输 = 0 胜。
+  // 分母 = 已结算场次 − 走盘场次。避免让整数让球"走盘是盘口必然"的结构被算作拖后腿。
+  winRate: number;
   settledCount: number;
   totalPnl: number;
-  totalBet: number;
-  roi: number;
+  totalBet: number;              // 全部本金投入（含 push 退本部分）
+  effectiveBet: number;          // 有效投注（剔除 push 与走水退本部分），用于 ROI
+  roi: number;                   // = totalPnl / effectiveBet × 100
   disciplineScore: number;       // % of non-violation bets
   violationCount: number;
   streak: { type: "win" | "loss" | "none"; count: number };
@@ -488,8 +491,18 @@ export interface RecordsAnalytics {
 }
 
 export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord[]): RecordsAnalytics {
-  // Settled & pnl
+  // 每个 outcome 下"有效投注比例"（push 走盘 = 0；半赢/半输 = 0.5；其余 = 1）
+  const effRatio = (o: string): number => {
+    switch (o) {
+      case "push":      return 0;
+      case "half_win":
+      case "half_loss": return 0.5;
+      default:          return 1;
+    }
+  };
+
   let totalBet = 0;
+  let effectiveBet = 0;
   let totalPnl = 0;
   let settledCount = 0;
   let wins = 0;
@@ -502,16 +515,22 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
     totalBet += r.bets.reduce((s, b) => s + b.amount, 0);
     if (r.result) {
       settledCount++;
-      totalPnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, r.result!.outcome), 0);
-      if (r.result.outcome === "win") wins++;
-      else if (r.result.outcome === "half_win") halfWins++;
-      else if (r.result.outcome === "push") pushes++;
+      const outcome = r.result.outcome;
+      const ratio = effRatio(outcome);
+      effectiveBet += r.bets.reduce((s, b) => s + b.amount * ratio, 0);
+      totalPnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, outcome), 0);
+      if (outcome === "win") wins++;
+      else if (outcome === "half_win") halfWins++;
+      else if (outcome === "push") pushes++;
     }
   }
-  const winRate = settledCount > 0
-    ? ((wins + halfWins * 0.5 + pushes * 0.5) / settledCount) * 100
+  // 盘面胜率：分母去掉 push；半赢算 0.5 胜，半输算 0 胜
+  const settledNonPush = settledCount - pushes;
+  const winRate = settledNonPush > 0
+    ? ((wins + halfWins * 0.5) / settledNonPush) * 100
     : 0;
-  const roi = totalBet > 0 ? (totalPnl / totalBet) * 100 : 0;
+  // ROI 基于有效投注（更反映让球盘真实回报率）
+  const roi = effectiveBet > 0 ? (totalPnl / effectiveBet) * 100 : 0;
   const disciplineScore = bets.length > 0 ? ((bets.length - violations) / bets.length) * 100 : 100;
 
   // Streak (latest consecutive win/loss across settled bets by kickoff time desc)
@@ -595,6 +614,7 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
     settledCount,
     totalPnl,
     totalBet,
+    effectiveBet,
     roi,
     disciplineScore,
     violationCount: violations,

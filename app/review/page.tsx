@@ -9,6 +9,8 @@ import {
   getBetRecords, getAbandonedRecords, dailyBetLimitFor, calcLockState, promoteWatchToBet,
   type LockState,
 } from "@/lib/storage";
+import { parseAmount, parseOddsInput } from "@/lib/format";
+import { useToast } from "@/components/toast";
 import type {
   HandicapValue,
   HandicapConfidence,
@@ -25,6 +27,10 @@ import type {
 import {
   SUBDIMS,
   gradeFromScore,
+  isSemiHardStopped,
+  suggestedAmount as suggestedAmountOf,
+  scoreCapFromSubdims,
+  SUBDIM_QUALITY,
   shouldRouteToWatch,
   isHardStopped,
   countSignals,
@@ -89,11 +95,12 @@ function SidedHandicapPicker({
         {(["home", "away"] as const).map((s) => (
           <button key={s}
             onClick={() => onChange({ ...data, side: s })}
-            className={`py-1.5 rounded text-[11px] font-semibold ${
+            className={`py-1.5 px-2 rounded text-[11px] font-semibold min-w-0 flex flex-col items-center leading-tight ${
               data.side === s ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
             }`}
           >
-            {s === "home" ? `主让（${homeTeam || "主队"}）` : `客让（${awayTeam || "客队"}）`}
+            <span className="opacity-70 text-[10px]">{s === "home" ? "主让" : "客让"}</span>
+            <span className="truncate max-w-full">{s === "home" ? (homeTeam || "主队") : (awayTeam || "客队")}</span>
           </button>
         ))}
       </div>
@@ -164,6 +171,12 @@ function ReviewInner() {
   const [betType, setBetType] = useState<"pre" | "live">("pre");
   const [bettingDirection, setBettingDirection] = useState<BettingDirection | "">("");
   const [odds, setOdds] = useState("0.97");
+  // 变盘（选填）：初盘 / 临开赛盘，用于复盘"变盘方向"而不靠子维度主观选 A/B/C
+  const [openHandicap, setOpenHandicap] = useState("");
+  const [openOdds, setOpenOdds] = useState("");
+  const [closeHandicap, setCloseHandicap] = useState("");
+  const [closeOdds, setCloseOdds] = useState("");
+  const [showLineMove, setShowLineMove] = useState(false);
 
   // Show high handicap (default collapsed; auto-expand if a high value is selected)
   const [showHighHcp, setShowHighHcp] = useState(false);
@@ -198,6 +211,14 @@ function ReviewInner() {
   const [todayCount, setTodayCount] = useState({ bets: 0, watches: 0 });
   useEffect(() => { setTodayCount(countToday()); }, []);
 
+  // Toast for validation errors
+  const { show: showToast, node: toastNode } = useToast();
+
+  // Inline validation messages
+  const [oddsError, setOddsError] = useState("");
+  const [kickoffError, setKickoffError] = useState("");
+  const [confirmAmountError, setConfirmAmountError] = useState("");
+
   // Edit-mode: original record (for preserving id/createdAt/result) + original amount
   const [editOriginalBet,   setEditOriginalBet]   = useState<BetRecord | null>(null);
   const [editOriginalWatch, setEditOriginalWatch] = useState<AbandonedRecord | null>(null);
@@ -222,6 +243,11 @@ function ReviewInner() {
       setDeduction(r.deduction);
       setScores(r.scores);
       setManualS(!!r.manualS);
+      setOpenHandicap(r.openHandicap ?? "");
+      setOpenOdds(r.openOdds != null ? String(r.openOdds) : "");
+      setCloseHandicap(r.closeHandicap ?? "");
+      setCloseOdds(r.closeOdds != null ? String(r.closeOdds) : "");
+      setShowLineMove(!!(r.openHandicap || r.openOdds || r.closeHandicap || r.closeOdds));
     } else if (isEditingWatch) {
       const r = getAbandonedRecords().find((x) => x.id === editWatchId);
       if (!r) return;
@@ -248,18 +274,19 @@ function ReviewInner() {
   }, [scores]);
 
   const hardStopped = useMemo(() => isHardStopped(scores), [scores]);
+  const semiHardStopped = useMemo(() => isSemiHardStopped(scores), [scores]);
   const routeToWatch = shouldRouteToWatch(totalScore, hardStopped);
   const grade: Grade = useMemo(
-    () => gradeFromScore(totalScore, hardStopped, false),
-    [totalScore, hardStopped]
+    () => gradeFromScore(totalScore, hardStopped, false, semiHardStopped),
+    [totalScore, hardStopped, semiHardStopped]
   );
-  const canUpgradeS = totalScore === 10 && !hardStopped;
+  const canUpgradeS = totalScore === 10 && !hardStopped && !semiHardStopped;
   const [manualS, setManualS] = useState(false);
   const finalGrade: Grade = canUpgradeS && manualS ? "S" : grade;
 
   const signals = useMemo(() => countSignals(scores), [scores]);
 
-  const suggestedAmount = settings.gradeAmounts[finalGrade] ?? settings.gradeAmounts.C;
+  const suggestedAmount = suggestedAmountOf(finalGrade, settings.gradeAmounts, semiHardStopped);
 
   // Team name for preview
   const betTeamName = useMemo(() => {
@@ -281,18 +308,21 @@ function ReviewInner() {
     return isNaN(oddsForPreview) ? s.replace(/@[\d.]+$/, "@?") : s;
   }, [betTeamName, handicapSide, handicapValue, bettingDirection, odds]);
 
-  // Auto-generate watch reason
+  // Auto-generate watch reason (hard-gate returns chip list, not string)
+  const hardFailChips = useMemo(() => {
+    if (!hardStopped) return [] as string[];
+    const fail: string[] = [];
+    if (scores.bookie.score === 0) fail.push("庄家立场");
+    if (scores.reliability.score === 0) fail.push("可靠性");
+    if (scores.trap.score === 0) fail.push("诱盘/抽水");
+    return fail;
+  }, [hardStopped, scores]);
+
   const autoWatchReason = useMemo(() => {
-    if (hardStopped) {
-      const fail: string[] = [];
-      if (scores.bookie.score === 0) fail.push("庄家立场");
-      if (scores.reliability.score === 0) fail.push("可靠性");
-      if (scores.trap.score === 0) fail.push("诱盘/抽水");
-      return `硬门槛未过：${fail.join("、")}`;
-    }
+    if (hardStopped) return `硬门槛未过：${hardFailChips.join("、")}`;
     if (totalScore <= 5) return `评分 ${totalScore}/10 偏低`;
     return "";
-  }, [hardStopped, totalScore, scores]);
+  }, [hardStopped, hardFailChips, totalScore]);
 
   // Basic fields ready?
   const coreReady = matchName && homeTeam && awayTeam && handicapSide && handicapValue && bettingDirection;
@@ -300,17 +330,26 @@ function ReviewInner() {
   // ─── Handlers ─────────────────────────────────────────────────────────────
 
   const setSubdim = (catKey: keyof ScoreData, subKey: string, choice: SubdimChoice) => {
-    setScores((p) => ({
-      ...p,
-      [catKey]: {
-        ...p[catKey],
-        subdims: { ...p[catKey].subdims, [subKey]: choice },
-      },
-    }));
+    setScores((p) => {
+      const nextSubdims = { ...p[catKey].subdims, [subKey]: choice };
+      // 子维度变化 → 重新 clamp 当前 score（防止答案变差但旧总分还留着高值）
+      const cap = scoreCapFromSubdims(catKey, nextSubdims);
+      const curScore = p[catKey].score;
+      const clamped = (curScore > cap ? cap : curScore) as 0 | 1 | 2;
+      return {
+        ...p,
+        [catKey]: { ...p[catKey], subdims: nextSubdims, score: clamped },
+      };
+    });
   };
 
   const setScore = (catKey: keyof ScoreData, score: 0 | 1 | 2) => {
-    setScores((p) => ({ ...p, [catKey]: { ...p[catKey], score } }));
+    setScores((p) => {
+      // 质量型维度：子维度答案推出的上限 clamp，避免"子维度全选差但总分拍 2"
+      const cap = scoreCapFromSubdims(catKey, p[catKey].subdims);
+      const clamped = (score > cap ? cap : score) as 0 | 1 | 2;
+      return { ...p, [catKey]: { ...p[catKey], score: clamped } };
+    });
   };
 
   const setNote = (catKey: keyof ScoreData, note: string) => {
@@ -325,6 +364,8 @@ function ReviewInner() {
     setMatchName(""); setHomeTeam(""); setAwayTeam(""); setKickoffTime("");
     setHandicapSide(""); setHandicapValue(""); setBetType("pre");
     setBettingDirection(""); setOdds("0.97");
+    setOpenHandicap(""); setOpenOdds(""); setCloseHandicap(""); setCloseOdds("");
+    setShowLineMove(false);
     setDeduction(emptyDeduction());
     setScores(emptyScoreData());
     setExpandedCats({ fundamental: true, odds: true, reliability: true, trap: true, bookie: true });
@@ -333,14 +374,40 @@ function ReviewInner() {
     setManualS(false);
   };
 
+  // 校验关键字段（开赛时间必填、水位必须 > 0）
+  const validateCore = (): boolean => {
+    let ok = true;
+    if (!kickoffTime) {
+      setKickoffError("请填写开赛时间");
+      ok = false;
+    } else {
+      setKickoffError("");
+    }
+    const o = parseOddsInput(odds);
+    if (!o.ok) {
+      setOddsError(o.error || "水位无效");
+      ok = false;
+    } else {
+      setOddsError("");
+    }
+    if (!ok) {
+      showToast("请先修正红字部分", "error");
+    }
+    return ok;
+  };
+
   const handleOpenConfirm = () => {
+    if (!validateCore()) return;
     setConfirmAmount(suggestedAmount.toString());
+    setConfirmAmountError("");
     setConfirmMode(isEditingBet ? "edit" : "new");
     setConfirmOpen(true);
   };
 
   const handleOpenPromote = () => {
+    if (!validateCore()) return;
     setConfirmAmount(suggestedAmount.toString());
+    setConfirmAmountError("");
     setConfirmMode("promote");
     setConfirmOpen(true);
   };
@@ -349,7 +416,11 @@ function ReviewInner() {
     if (!editOriginalWatch) return;
     const orig = editOriginalWatch;
     const id = `b-${Date.now()}`;
-    const amount = parseInt(confirmAmount.replace(/[^0-9]/g, ""), 10) || suggestedAmount;
+    const amt = parseAmount(confirmAmount);
+    if (!amt.ok) { setConfirmAmountError(amt.error || "金额无效"); return; }
+    const amount = amt.value;
+    const oddsParsed = parseOddsInput(odds);
+    if (!oddsParsed.ok) { setOddsError(oddsParsed.error || "水位无效"); return; }
     const newBet: BetRecord = {
       id,
       type: "bet",
@@ -370,11 +441,12 @@ function ReviewInner() {
         type: betType,
         handicapSide: handicapSide || orig.handicapSide,
         handicapValue: handicapValue || orig.handicapValue,
-        odds: parseFloat(odds) || 0.97,
+        odds: oddsParsed.value,
         amount,
         betTime: new Date().toISOString(),
       }],
       isDisciplineViolation: true,          // 观察转下注 = 违纪
+      violationReason: "观察转下注（原判断应观察不下注）",
       completionStatus: "pristine",
       createdAt: new Date().toISOString(),
       convertedFromWatchId: orig.id,
@@ -387,16 +459,24 @@ function ReviewInner() {
 
   const handleSaveBet = () => {
     const id = `b-${Date.now()}`;
-    const amount = parseInt(confirmAmount.replace(/[^0-9]/g, ""), 10) || suggestedAmount;
+    const amt = parseAmount(confirmAmount);
+    if (!amt.ok) { setConfirmAmountError(amt.error || "金额无效"); return; }
+    const amount = amt.value;
+    const oddsParsed = parseOddsInput(odds);
+    if (!oddsParsed.ok) { setOddsError(oddsParsed.error || "水位无效"); setConfirmOpen(false); return; }
+    if (!kickoffTime) { setKickoffError("请填写开赛时间"); setConfirmOpen(false); return; }
     // Over-suggested => violation
     const isViolation = amount > suggestedAmount;
+    const violationReason = isViolation
+      ? `超建议金额（建议 ¥${suggestedAmount}，实投 ¥${amount}）`
+      : undefined;
     saveBetRecord({
       id,
       type: "bet",
       match: matchName || "未命名比赛",
       homeTeam: homeTeam || "主队",
       awayTeam: awayTeam || "客队",
-      kickoffTime: kickoffTime ? normalizeKickoff(kickoffTime) : new Date().toISOString(),
+      kickoffTime: normalizeKickoff(kickoffTime),
       bettingDirection: bettingDirection || "home",
       handicapSide: handicapSide || "home",
       handicapValue,
@@ -405,16 +485,21 @@ function ReviewInner() {
       totalScore,
       scores,
       deduction,
+      openHandicap: openHandicap || undefined,
+      openOdds: openOdds && !isNaN(parseFloat(openOdds)) ? parseFloat(openOdds) : undefined,
+      closeHandicap: closeHandicap || undefined,
+      closeOdds: closeOdds && !isNaN(parseFloat(closeOdds)) ? parseFloat(closeOdds) : undefined,
       bets: [{
         id: `bs-${Date.now()}`,
         type: betType,
         handicapSide: handicapSide || "home",
         handicapValue,
-        odds: parseFloat(odds) || 0.97,
+        odds: oddsParsed.value,
         amount,
         betTime: new Date().toISOString(),
       }],
       isDisciplineViolation: isViolation,
+      violationReason,
       completionStatus: "pristine",
       createdAt: new Date().toISOString(),
     });
@@ -424,6 +509,9 @@ function ReviewInner() {
   };
 
   const handleOpenWatch = () => {
+    // 观察也要求开赛时间必填，避免记录时间错乱
+    if (!kickoffTime) { setKickoffError("请填写开赛时间"); showToast("请先修正红字部分", "error"); return; }
+    setKickoffError("");
     setWatchReason(autoWatchReason);
     setWatchOpen(true);
   };
@@ -436,7 +524,7 @@ function ReviewInner() {
       match: matchName || "未命名比赛",
       homeTeam: homeTeam || "主队",
       awayTeam: awayTeam || "客队",
-      kickoffTime: kickoffTime ? normalizeKickoff(kickoffTime) : new Date().toISOString(),
+      kickoffTime: normalizeKickoff(kickoffTime),
       bettingDirection: bettingDirection || "home",
       handicapSide: handicapSide || "home",
       handicapValue,
@@ -455,8 +543,10 @@ function ReviewInner() {
   // ─── Edit-mode handlers ───────────────────────────────────────────────────
 
   const handleOpenEditConfirm = () => {
+    if (!validateCore()) return;
     if (isEditingBet && editOriginalBet) {
       setConfirmAmount(String(editOriginalBet.bets[0]?.amount ?? suggestedAmount));
+      setConfirmAmountError("");
       setConfirmOpen(true);
     }
   };
@@ -464,10 +554,13 @@ function ReviewInner() {
   const handleSaveBetEdit = () => {
     if (!editOriginalBet) return;
     const orig = editOriginalBet;
-    const amount = parseInt(confirmAmount.replace(/[^0-9]/g, ""), 10) || orig.bets[0]?.amount || suggestedAmount;
+    const amt = parseAmount(confirmAmount);
+    if (!amt.ok) { setConfirmAmountError(amt.error || "金额无效"); return; }
+    const amount = amt.value;
     const isViolation = amount > suggestedAmount;
-    const parsedOdds = parseFloat(odds);
-    const finalOdds = isNaN(parsedOdds) || parsedOdds <= 0 ? (orig.bets[0]?.odds ?? 0.97) : parsedOdds;
+    const parsedOdds = parseOddsInput(odds);
+    if (!parsedOdds.ok) { setOddsError(parsedOdds.error || "水位无效"); setConfirmOpen(false); return; }
+    const finalOdds = parsedOdds.value;
     const firstBet = orig.bets[0];
     saveBetRecord({
       ...orig,
@@ -483,6 +576,10 @@ function ReviewInner() {
       totalScore,
       scores,
       deduction,
+      openHandicap: openHandicap || undefined,
+      openOdds: openOdds && !isNaN(parseFloat(openOdds)) ? parseFloat(openOdds) : undefined,
+      closeHandicap: closeHandicap || undefined,
+      closeOdds: closeOdds && !isNaN(parseFloat(closeOdds)) ? parseFloat(closeOdds) : undefined,
       bets: [
         firstBet
           ? { ...firstBet, type: betType, handicapSide: handicapSide || firstBet.handicapSide,
@@ -492,6 +589,11 @@ function ReviewInner() {
         ...orig.bets.slice(1),
       ],
       isDisciplineViolation: isViolation,
+      violationReason: isViolation
+        ? (orig.convertedFromWatchId
+            ? "观察转下注（原判断应观察不下注）"
+            : `超建议金额（建议 ¥${suggestedAmount}，实投 ¥${amount}）`)
+        : undefined,
       // Preserve: id, completionStatus, createdAt, result, convertedFromWatchId
     });
     router.push(`/records?id=${orig.id}`);
@@ -528,6 +630,7 @@ function ReviewInner() {
 
   return (
     <div className="min-h-screen pb-28">
+      {toastNode}
       {/* Header */}
       <div className="sticky top-0 z-20 bg-background border-b border-border">
         <div className="flex items-center justify-between px-4 py-3">
@@ -582,8 +685,10 @@ function ReviewInner() {
               placeholder="客队"
               className="w-full bg-muted rounded px-3 py-2 text-sm outline-none placeholder:text-muted-foreground/40" />
           </div>
-          <input type="datetime-local" value={kickoffTime} onChange={(e) => setKickoffTime(e.target.value)}
-            className="w-full bg-muted rounded px-3 py-2 text-sm outline-none" />
+          <input type="datetime-local" value={kickoffTime}
+            onChange={(e) => { setKickoffTime(e.target.value); if (e.target.value) setKickoffError(""); }}
+            className={`w-full bg-muted rounded px-3 py-2 text-sm outline-none ${kickoffError ? "ring-1 ring-loss" : ""}`} />
+          {kickoffError && <p className="text-[10px] text-loss -mt-1">{kickoffError}</p>}
         </section>
 
         {/* ── Handicap & direction ───────────────────────────────── */}
@@ -596,11 +701,12 @@ function ReviewInner() {
             <div className="grid grid-cols-2 gap-1.5">
               {(["home", "away"] as const).map((s) => (
                 <button key={s} onClick={() => setHandicapSide(s)}
-                  className={`py-2 rounded text-xs font-semibold transition-colors ${
+                  className={`py-1.5 px-2 rounded text-xs font-semibold transition-colors min-w-0 flex flex-col items-center leading-tight ${
                     handicapSide === s ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
                   }`}
                 >
-                  {s === "home" ? `主让（${homeTeam || "主队"}）` : `客让（${awayTeam || "客队"}）`}
+                  <span className="opacity-70 text-[10px]">{s === "home" ? "主让" : "客让"}</span>
+                  <span className="truncate max-w-full">{s === "home" ? (homeTeam || "主队") : (awayTeam || "客队")}</span>
                 </button>
               ))}
             </div>
@@ -646,11 +752,12 @@ function ReviewInner() {
             <div className="grid grid-cols-2 gap-1.5">
               {(["home", "away"] as const).map((d) => (
                 <button key={d} onClick={() => setBettingDirection(d)}
-                  className={`py-2 rounded text-xs font-semibold transition-colors ${
+                  className={`py-1.5 px-2 rounded text-xs font-semibold transition-colors min-w-0 flex flex-col items-center leading-tight ${
                     bettingDirection === d ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
                   }`}
                 >
-                  {d === "home" ? `主队（${homeTeam || "主队"}）` : `客队（${awayTeam || "客队"}）`}
+                  <span className="opacity-70 text-[10px]">{d === "home" ? "买主" : "买客"}</span>
+                  <span className="truncate max-w-full">{d === "home" ? (homeTeam || "主队") : (awayTeam || "客队")}</span>
                 </button>
               ))}
             </div>
@@ -659,10 +766,97 @@ function ReviewInner() {
           {/* Odds */}
           <div>
             <p className="text-[11px] text-muted-foreground mb-1.5">港盘水位</p>
-            <input value={odds} onChange={(e) => setOdds(e.target.value)}
+            <input value={odds}
+              onChange={(e) => {
+                setOdds(e.target.value);
+                const r = parseOddsInput(e.target.value);
+                setOddsError(r.ok ? "" : (r.error || ""));
+              }}
               placeholder="0.97"
               inputMode="decimal"
-              className="w-full bg-muted rounded px-3 py-2 text-sm font-mono outline-none placeholder:text-muted-foreground/40" />
+              className={`w-full bg-muted rounded px-3 py-2 text-sm font-mono outline-none placeholder:text-muted-foreground/40 ${oddsError ? "ring-1 ring-loss" : ""}`} />
+            {oddsError && <p className="text-[10px] text-loss mt-1">{oddsError}</p>}
+          </div>
+
+          {/* 变盘记录（选填） */}
+          <div>
+            <button
+              onClick={() => setShowLineMove((v) => !v)}
+              className="flex items-center gap-1 text-[11px] text-muted-foreground"
+            >
+              <span className={`transition-transform ${showLineMove ? "rotate-90" : ""}`}>▸</span>
+              变盘记录（选填，复盘专业度 +）
+            </button>
+            {showLineMove && (
+              <div className="mt-2 space-y-2 border border-border rounded-md p-2.5 bg-muted/30">
+                <p className="text-[10px] text-muted-foreground/70 leading-relaxed">
+                  填"初盘"与"临开赛盘"可客观记录变盘方向，替代子维度里的主观"变盘倾向"判断。全部选填。
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <p className="text-[10px] text-muted-foreground mb-1">初盘让球</p>
+                    <input
+                      value={openHandicap}
+                      onChange={(e) => setOpenHandicap(e.target.value)}
+                      placeholder="如 0.5"
+                      inputMode="decimal"
+                      className="w-full bg-background rounded px-2 py-1.5 text-xs font-mono outline-none placeholder:text-muted-foreground/40 border border-border"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground mb-1">初盘水位</p>
+                    <input
+                      value={openOdds}
+                      onChange={(e) => setOpenOdds(e.target.value)}
+                      placeholder="如 0.95"
+                      inputMode="decimal"
+                      className="w-full bg-background rounded px-2 py-1.5 text-xs font-mono outline-none placeholder:text-muted-foreground/40 border border-border"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground mb-1">临开赛让球</p>
+                    <input
+                      value={closeHandicap}
+                      onChange={(e) => setCloseHandicap(e.target.value)}
+                      placeholder="如 0.75"
+                      inputMode="decimal"
+                      className="w-full bg-background rounded px-2 py-1.5 text-xs font-mono outline-none placeholder:text-muted-foreground/40 border border-border"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-[10px] text-muted-foreground mb-1">临开赛水位</p>
+                    <input
+                      value={closeOdds}
+                      onChange={(e) => setCloseOdds(e.target.value)}
+                      placeholder="如 0.88"
+                      inputMode="decimal"
+                      className="w-full bg-background rounded px-2 py-1.5 text-xs font-mono outline-none placeholder:text-muted-foreground/40 border border-border"
+                    />
+                  </div>
+                </div>
+                {(() => {
+                  // 实时提示变盘方向
+                  const oh = parseFloat(openHandicap);
+                  const ch = parseFloat(closeHandicap);
+                  const oo = parseFloat(openOdds);
+                  const co = parseFloat(closeOdds);
+                  const lineDiff = !isNaN(oh) && !isNaN(ch) ? ch - oh : null;
+                  const oddsDiff = !isNaN(oo) && !isNaN(co) ? co - oo : null;
+                  if (lineDiff === null && oddsDiff === null) return null;
+                  return (
+                    <div className="text-[10px] text-muted-foreground leading-relaxed border-t border-border/50 pt-1.5">
+                      {lineDiff !== null && (
+                        <span>让球 {lineDiff > 0 ? `升盘 +${lineDiff.toFixed(2)}` : lineDiff < 0 ? `降盘 \u2212${Math.abs(lineDiff).toFixed(2)}` : "未变"}</span>
+                      )}
+                      {lineDiff !== null && oddsDiff !== null && <span className="mx-1 opacity-50">·</span>}
+                      {oddsDiff !== null && (
+                        <span>水位 {oddsDiff > 0 ? `升 +${oddsDiff.toFixed(2)}` : oddsDiff < 0 ? `降 \u2212${Math.abs(oddsDiff).toFixed(2)}` : "未变"}</span>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
           </div>
 
           {/* Bet type */}
@@ -879,21 +1073,45 @@ function ReviewInner() {
 
                       {/* Score buttons */}
                       <div className="pt-2 border-t border-border">
-                        <p className="text-[11px] text-muted-foreground mb-1.5">本项评分</p>
+                        <div className="flex items-center justify-between mb-1.5">
+                          <p className="text-[11px] text-muted-foreground">本项评分</p>
+                          {SUBDIM_QUALITY[key] && (() => {
+                            const cap = scoreCapFromSubdims(key, cat.subdims);
+                            const hasAnswers = Object.values(cat.subdims || {}).some((v) => v);
+                            if (!hasAnswers) return null;
+                            return (
+                              <span className="text-[10px] text-muted-foreground/70">
+                                子维度上限 <span className={cap === 2 ? "text-profit" : cap === 1 ? "text-warning" : "text-loss"}>+{cap}</span>
+                              </span>
+                            );
+                          })()}
+                        </div>
                         <div className="grid grid-cols-3 gap-1.5">
                           {([
                             { v: 2 as const, label: "+2 通过", cls: "bg-profit text-white" },
                             { v: 1 as const, label: "+1 勉强", cls: "bg-warning text-white" },
                             { v: 0 as const, label: "+0 未过", cls: "bg-loss text-white" },
-                          ]).map(({ v, label, cls }) => (
-                            <button key={v} onClick={() => setScore(key, v)}
-                              className={`py-2 rounded text-xs font-bold transition-colors ${
-                                cat.score === v ? cls : "bg-muted text-muted-foreground"
-                              }`}
-                            >
-                              {label}
-                            </button>
-                          ))}
+                          ]).map(({ v, label, cls }) => {
+                            const cap = SUBDIM_QUALITY[key] ? scoreCapFromSubdims(key, cat.subdims) : 2;
+                            const locked = v > cap;
+                            return (
+                              <button
+                                key={v}
+                                onClick={() => { if (!locked) setScore(key, v); }}
+                                disabled={locked}
+                                title={locked ? `子维度上限为 +${cap}，先调整子维度再打更高分` : ""}
+                                className={`py-2 rounded text-xs font-bold transition-colors ${
+                                  cat.score === v
+                                    ? cls
+                                    : locked
+                                      ? "bg-muted/40 text-muted-foreground/30 cursor-not-allowed line-through"
+                                      : "bg-muted text-muted-foreground"
+                                }`}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
 
@@ -942,6 +1160,9 @@ function ReviewInner() {
 
           {hardStopped && !isEditing && (
             <p className="text-[11px] text-loss">⚠ 硬门槛未通过，强制转入观察</p>
+          )}
+          {!hardStopped && semiHardStopped && !isEditing && (
+            <p className="text-[11px] text-warning">⚠ 半硬门槛：庄家立场暧昧，已自动降级一档、建议金额砍半</p>
           )}
 
           {/* Edit-mode inline watch reason */}
@@ -1050,8 +1271,9 @@ function ReviewInner() {
       {/* Confirm bet dialog (used for both new and edit) */}
       {confirmOpen && (() => {
         const origAmount    = editOriginalBet?.bets[0]?.amount ?? 0;
-        const parsedAmount  = parseInt((confirmAmount || "").replace(/[^0-9]/g, ""), 10) || 0;
-        const amountChanged = isEditingBet && parsedAmount !== origAmount;
+        const amtRes        = parseAmount(confirmAmount || "");
+        const parsedAmount  = amtRes.ok ? amtRes.value : 0;
+        const amountChanged = isEditingBet && amtRes.ok && parsedAmount !== origAmount;
         const hadResult     = !!editOriginalBet?.result;
         return (
           <div className="fixed inset-0 z-50 bg-background/80 flex items-end">
@@ -1070,9 +1292,22 @@ function ReviewInner() {
                 </div>
               )}
               <p className="text-[11px] text-muted-foreground">建议金额 ¥{suggestedAmount.toLocaleString()}（{finalGrade} 级）</p>
-              <input value={confirmAmount} onChange={(e) => setConfirmAmount(e.target.value)}
-                inputMode="numeric"
-                className="w-full bg-muted rounded px-3 py-3 text-lg font-mono outline-none" />
+              <input value={confirmAmount}
+                onChange={(e) => {
+                  setConfirmAmount(e.target.value);
+                  const r = parseAmount(e.target.value);
+                  setConfirmAmountError(r.ok ? "" : (r.error || ""));
+                }}
+                inputMode="decimal"
+                className={`w-full bg-muted rounded px-3 py-3 text-lg font-mono outline-none ${confirmAmountError ? "ring-1 ring-loss" : ""}`} />
+              {/* 实时显示解析后金额，避免 "1.5 被读成 15" 之类的隐形坑 */}
+              {amtRes.ok ? (
+                <p className="text-[10px] text-muted-foreground">
+                  将保存为 <span className="font-mono text-foreground">¥{parsedAmount.toLocaleString()}</span>
+                </p>
+              ) : (
+                <p className="text-[11px] text-loss">{confirmAmountError || amtRes.error}</p>
+              )}
               {!isEditingBet && overLimitBet && (
                 <p className="text-[11px] text-loss">⚠ 今日下注已达上限 {todayCount.bets}/{todayBetLimit}</p>
               )}
@@ -1099,12 +1334,13 @@ function ReviewInner() {
                 </button>
               ) : (
                 <button
+                  disabled={!amtRes.ok}
                   onClick={
                     confirmMode === "promote" ? handlePromoteFromEdit
                     : isEditingBet ? handleSaveBetEdit
                     : handleSaveBet
                   }
-                  className="w-full py-3 rounded font-bold text-sm bg-foreground text-background"
+                  className={`w-full py-3 rounded font-bold text-sm ${amtRes.ok ? "bg-foreground text-background" : "bg-muted text-muted-foreground/50"}`}
                 >
                   {confirmMode === "promote" ? "确认改为下注" : isEditingBet ? "确认保存修改" : "确认保存下注记录"}
                 </button>
@@ -1121,6 +1357,18 @@ function ReviewInner() {
         <div className="fixed inset-0 z-50 bg-background/80 flex items-end">
           <div className="w-full bg-card border-t border-border px-4 py-5 space-y-3 max-w-[430px] mx-auto max-h-[85vh] overflow-y-auto">
             <p className="text-sm font-bold">转入观察池</p>
+            {hardFailChips.length > 0 && (
+              <div className="rounded-md bg-loss/10 border border-loss/30 px-3 py-2">
+                <p className="text-[10px] font-bold text-loss mb-1.5">硬门槛未过</p>
+                <div className="flex flex-wrap gap-1">
+                  {hardFailChips.map((c) => (
+                    <span key={c} className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-loss/20 text-loss">
+                      {c}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
             <p className="text-[11px] text-muted-foreground">观察原因</p>
             <textarea rows={3} value={watchReason} onChange={(e) => setWatchReason(e.target.value)}
               className="w-full bg-muted rounded px-3 py-2 text-xs outline-none resize-none placeholder:text-muted-foreground/40"

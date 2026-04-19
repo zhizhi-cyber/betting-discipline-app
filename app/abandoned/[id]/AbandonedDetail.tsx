@@ -7,6 +7,7 @@ import { ArrowLeft, ChevronDown, ChevronUp, Trash2, Star, Pencil } from "lucide-
 import type { ReviewConclusion, AbandonedRecord, AnalysisVerdict, ScoreData, BetRecord, SidedHandicap } from "@/lib/types";
 import { SUBDIMS, formatBetPreview, formatSidedHandicap, parseKickoff } from "@/lib/types";
 import { getAbandonedRecords, saveAbandonedRecord, deleteAbandonedRecord, promoteWatchToBet, getSettings, countToday } from "@/lib/storage";
+import { parseAmount, parseOddsInput } from "@/lib/format";
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
 
@@ -118,8 +119,12 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
 
   const handlePromote = () => {
     if (!record) return;
-    const amount = parseInt(promoteAmount.replace(/[^0-9]/g, ""), 10) || settings.gradeAmounts.C;
-    const odds = parseFloat(promoteOdds) || 0.97;
+    const amt = parseAmount(promoteAmount);
+    if (!amt.ok) { showToast(amt.error || "金额无效", "error"); return; }
+    const oddsRes = parseOddsInput(promoteOdds);
+    if (!oddsRes.ok) { showToast(oddsRes.error || "水位无效", "error"); return; }
+    const amount = amt.value;
+    const odds = oddsRes.value;
     const newBetId = `b-${Date.now()}`;
     const newBet: BetRecord = {
       id: newBetId,
@@ -145,6 +150,7 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
         betTime: new Date().toISOString(),
       }],
       isDisciplineViolation: true,
+      violationReason: "观察转下注（原判断应观察不下注）",
       completionStatus: "pristine",
       createdAt: new Date().toISOString(),
       convertedFromWatchId: record.id,

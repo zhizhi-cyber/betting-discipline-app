@@ -44,7 +44,8 @@ function CountUp({ value, className }: { value: number; className?: string }) {
   const mv = useMotionValue(0);
   const rounded = useTransform(mv, (v) => {
     const n = Math.round(v);
-    return (n > 0 ? "+" : n === 0 ? "" : "") + n.toLocaleString();
+    if (n === 0) return "0";
+    return (n > 0 ? "+" : "\u2212") + Math.abs(n).toLocaleString();
   });
   useEffect(() => {
     const controls = animate(mv, value, { duration: 0.7, ease: "easeOut" });
@@ -231,7 +232,9 @@ export default function HomePage() {
   const hasTarget = target > 0 && timeRange !== "all";
   const progress = hasTarget ? Math.max(0, Math.min(100, (stats.totalPnl / target) * 100)) : 0;
   const gap = target - stats.totalPnl;
-  const isProfit = stats.totalPnl >= 0;
+  const hasData = stats.totalBet > 0;
+  const isProfit = stats.totalPnl > 0;
+  const isLoss = stats.totalPnl < 0;
   const profitColor = "#e03535";  // 盈利红 (locked)
   const lossColor = "#2a9d5c";    // 亏损绿 (locked)
 
@@ -311,15 +314,22 @@ export default function HomePage() {
               <div className="flex-1 min-w-0">
                 {/* Number halo */}
                 <div className="relative">
-                  <div
-                    className="absolute inset-0 blur-3xl opacity-40 -z-[1]"
-                    style={{
-                      background: `radial-gradient(closest-side, ${isProfit ? profitColor : lossColor}, transparent 70%)`,
-                    }}
-                  />
+                  {hasData && (
+                    <div
+                      className="absolute inset-0 blur-3xl opacity-40 -z-[1]"
+                      style={{
+                        background: `radial-gradient(closest-side, ${isProfit ? profitColor : lossColor}, transparent 70%)`,
+                      }}
+                    />
+                  )}
                   <CountUp
                     value={stats.totalPnl}
-                    className={`block text-[44px] font-black font-mono tabular-nums leading-none tracking-tight ${isProfit ? "text-profit" : "text-loss"}`}
+                    className={`block text-[44px] font-black font-mono tabular-nums leading-none tracking-tight ${
+                      !hasData ? "text-muted-foreground/60"
+                      : isProfit ? "text-profit"
+                      : isLoss ? "text-loss"
+                      : "text-muted-foreground"
+                    }`}
                   />
                 </div>
                 {hasTarget ? (
@@ -354,7 +364,12 @@ export default function HomePage() {
                 icon={<TrendingUp size={11} strokeWidth={2} />}
                 label="ROI"
                 value={stats.totalBet > 0 ? `${stats.roi >= 0 ? "+" : ""}${stats.roi}%` : "—"}
-                valueCls={stats.roi >= 0 ? "text-profit" : "text-loss"}
+                valueCls={
+                  stats.totalBet === 0 ? "text-muted-foreground/60"
+                  : stats.roi > 0 ? "text-profit"
+                  : stats.roi < 0 ? "text-loss"
+                  : "text-muted-foreground"
+                }
               />
               <StatCell
                 label="场次"

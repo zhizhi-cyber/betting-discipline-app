@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState, useEffect } from "react";
 import { Eye, EyeOff } from "lucide-react";
+import { formatMoneyShort } from "@/lib/format";
 
 // PnL bar chart + cumulative line overlay.
 // 盈利红 (#e03535) / 亏损绿 (#2a9d5c) — locked per Chinese market convention.
@@ -31,15 +32,26 @@ const PROFIT = "#e03535";
 const LOSS = "#2a9d5c";
 const CUM = "#f5c842";
 
+// 短格式（轴标签）：走全站统一的 万/k 格式，带 U+2212 负号
 function fmtShort(n: number): string {
-  const abs = Math.abs(n);
-  if (abs >= 1000) return `${n < 0 ? "-" : ""}${(abs / 1000).toFixed(abs >= 10000 ? 0 : 1)}k`;
-  return `${Math.round(n)}`;
+  if (n === 0) return "0";
+  // formatMoneyShort 正数默认带 "+"，轴标签不想要 "+"，关闭
+  return formatMoneyShort(n, { withSign: false });
 }
 
+// 金额显示（tooltip 等）：保留有意义的小数（最多 2 位），¥ 前缀，U+2212 负号
 function fmtMoney(n: number): string {
-  const sign = n > 0 ? "+" : n < 0 ? "-" : "";
-  return `${sign}¥${Math.abs(Math.round(n)).toLocaleString()}`;
+  // 先对齐到分，消除浮点累加误差（如 0.1+0.2 的 1e-16 漂移）
+  const cents = Math.round(n * 100);
+  if (cents === 0) return "±¥0";
+  const abs = Math.abs(cents) / 100;
+  // 若正好是整数，就不显示 .00；否则保留 1-2 位
+  const hasFrac = cents % 100 !== 0;
+  const body = hasFrac
+    ? abs.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : abs.toLocaleString();
+  const sign = cents < 0 ? "\u2212" : "+";
+  return `${sign}¥${body}`;
 }
 
 function parseKey(k: string): Date {
@@ -71,19 +83,37 @@ export default function PnlBars({
     return (b - a) / 86400000 >= 6 ? "week" : "day";
   }, [data, granularity]);
 
+  // 在"分"的整数域累加，避免浮点漂移（如 0.1+0.2 带出 1e-16）
   const cumulative = useMemo(() => {
-    let sum = 0;
-    return data.map((d) => (sum += d.pnl));
+    let sumCents = 0;
+    return data.map((d) => {
+      sumCents += Math.round(d.pnl * 100);
+      return sumCents / 100;
+    });
   }, [data]);
 
-  const maxAbsPnl = useMemo(
-    () => Math.max(1, ...data.map((d) => Math.abs(d.pnl))),
-    [data]
-  );
+  // 用"温和封顶"(winsorize)处理异常大值：一笔 10 万不应把其它几百几千的柱子拍成看不见。
+  // 策略：Y 轴上限取第 90 分位数绝对值的 1.2 倍（至少保持 1 和原最大值的下限）；
+  // 超过该上限的柱子会被截顶，并用三角箭头标记。
+  const { maxAbsPnl, pnlCap, absMaxPnlRaw } = useMemo(() => {
+    const abs = data.map((d) => Math.abs(d.pnl)).filter((v) => v > 0).sort((a, b) => a - b);
+    const rawMax = abs.length > 0 ? abs[abs.length - 1] : 1;
+    if (abs.length < 5) {
+      // 样本少，直接用最大值
+      return { maxAbsPnl: Math.max(1, rawMax), pnlCap: Infinity, absMaxPnlRaw: rawMax };
+    }
+    // 90 分位
+    const p90 = abs[Math.floor(abs.length * 0.9)];
+    const cap = Math.max(p90 * 1.2, 1);
+    // 封顶不能小于次大值，否则截太狠；同时不允许小于最大值的 40%
+    const finalCap = Math.max(cap, rawMax * 0.4);
+    return { maxAbsPnl: finalCap, pnlCap: finalCap, absMaxPnlRaw: rawMax };
+  }, [data]);
   const maxAbsCum = useMemo(
     () => Math.max(1, ...cumulative.map((v) => Math.abs(v))),
     [cumulative]
   );
+  const hasClippedBar = isFinite(pnlCap) && absMaxPnlRaw > pnlCap;
 
   // Pinch-zoom on touch
   useEffect(() => {
@@ -132,7 +162,8 @@ export default function PnlBars({
   }
 
   const padLeft = 34;
-  const padRight = cumVisible ? 38 : 10;
+  // 周粒度下，最右侧 "12月" 之类标签半个字宽容易被切。多给 14px 的留白。
+  const padRight = (cumVisible ? 38 : 10) + (gran === "week" ? 14 : 0);
   const padTop = 8;
   const padBottom = 18;
   // SVG layout width stretches to container; use a large virtual viewBox for crisp scaling.
@@ -302,23 +333,39 @@ export default function PnlBars({
             );
           })}
 
-          {/* Bars */}
+          {/* Bars — 大值截顶防异常拍平 */}
           {data.map((d, i) => {
             if (d.pnl === 0) return null;
             const cx = padLeft + bandW * (i + 0.5);
-            const h = (Math.abs(d.pnl) / maxAbsPnl) * (half - 1);
+            const absPnl = Math.abs(d.pnl);
+            const clipped = isFinite(pnlCap) && absPnl > pnlCap;
+            const usedVal = clipped ? pnlCap : absPnl;
+            const h = (usedVal / maxAbsPnl) * (half - 1);
             const isProfit = d.pnl > 0;
             return (
-              <rect
-                key={d.key}
-                x={cx - barW / 2}
-                y={isProfit ? midY - h : midY}
-                width={barW}
-                height={Math.max(1, h)}
-                fill={isProfit ? PROFIT : LOSS}
-                opacity={activeIdx === null || activeIdx === i ? 0.9 : 0.45}
-                rx={1}
-              />
+              <g key={d.key}>
+                <rect
+                  x={cx - barW / 2}
+                  y={isProfit ? midY - h : midY}
+                  width={barW}
+                  height={Math.max(1, h)}
+                  fill={isProfit ? PROFIT : LOSS}
+                  opacity={activeIdx === null || activeIdx === i ? 0.9 : 0.45}
+                  rx={1}
+                />
+                {/* 截顶箭头标记 */}
+                {clipped && (
+                  <polygon
+                    points={
+                      isProfit
+                        ? `${cx - barW/2},${midY - h} ${cx + barW/2},${midY - h} ${cx},${midY - h - 4}`
+                        : `${cx - barW/2},${midY + h} ${cx + barW/2},${midY + h} ${cx},${midY + h + 4}`
+                    }
+                    fill={isProfit ? PROFIT : LOSS}
+                    opacity={0.9}
+                  />
+                )}
+              </g>
             );
           })}
 
@@ -409,6 +456,12 @@ export default function PnlBars({
           )}
         </svg>
       </div>
+
+      {hasClippedBar && !active && (
+        <p className="mt-1 text-[9px] text-muted-foreground/60">
+          ▲ 三角=该柱已截顶（单笔异常大，不影响数值，只为让其它柱子看得清）
+        </p>
+      )}
 
       {/* Tooltip strip */}
       {active && (
