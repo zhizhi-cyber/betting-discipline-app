@@ -365,6 +365,19 @@ export function calcLockState(now: Date = new Date(), settings?: AppSettings): L
   return state;
 }
 
+/**
+ * 统一口径的封锁文案。月度封锁=整体暂停（不可下注也不可观察）；
+ * 当日封锁=仅限观察（不可下注）。各页面统一用这个函数，避免口径漂移。
+ */
+export function formatLockMessage(lock: LockState): string {
+  if (!lock.locked) return "";
+  const when = lock.unlockLabel ?? "";
+  if (lock.reason === "monthly_drawdown") {
+    return `月度亏损达上限，${when} 前暂停下注`;
+  }
+  return `今日亏损达上限，${when} 前仅限观察`;
+}
+
 // ─── Grade win-rate breakdown ─────────────────────────────────────────────────
 // Half-win counts 0.5; push excluded from denominator.
 

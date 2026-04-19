@@ -7,6 +7,7 @@ import BottomNav from "@/components/bottom-nav";
 import {
   saveBetRecord, saveAbandonedRecord, getSettings, countToday,
   getBetRecords, getAbandonedRecords, dailyBetLimitFor, calcLockState, promoteWatchToBet,
+  formatLockMessage,
   type LockState,
 } from "@/lib/storage";
 import { parseAmount, parseOddsInput } from "@/lib/format";
@@ -1159,7 +1160,7 @@ function ReviewInner() {
           )}
 
           {hardStopped && !isEditing && (
-            <p className="text-[11px] text-loss">⚠ 硬门槛未通过，强制转入观察</p>
+            <p className="text-[11px] text-loss">⚠ 硬门槛未过，强制转入观察</p>
           )}
           {!hardStopped && semiHardStopped && !isEditing && (
             <p className="text-[11px] text-warning">⚠ 半硬门槛：庄家立场暧昧，已自动降级一档、建议金额砍半</p>
@@ -1180,9 +1181,7 @@ function ReviewInner() {
             <>
               {isLocked && (
                 <p className="text-[11px] text-loss mt-2 text-center">
-                  ⚠ {lockState.reason === "monthly_drawdown"
-                    ? `月度亏损已达上限，${lockState.unlockLabel} 前强制走观察`
-                    : `今日亏损已达上限，${lockState.unlockLabel} 前强制走观察`}
+                  ⚠ {formatLockMessage(lockState)}
                 </p>
               )}
               <div className="grid grid-cols-2 gap-2 pt-1">
@@ -1313,9 +1312,7 @@ function ReviewInner() {
               )}
               {!isEditingBet && isLocked && (
                 <p className="text-[11px] text-loss font-semibold">
-                  ⚠ {lockState.reason === "monthly_drawdown"
-                    ? `月度亏损已达上限，${lockState.unlockLabel} 前不可下注`
-                    : `今日亏损已达上限，${lockState.unlockLabel} 前强制走观察`}
+                  ⚠ {formatLockMessage(lockState)}
                 </p>
               )}
               {isEditingBet && amountChanged && hadResult && (

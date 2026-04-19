@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Plus, Settings, ChevronRight, Target, Activity, TrendingUp } from "lucide-react";
 import { motion, useMotionValue, useTransform, animate } from "motion/react";
 import { getTotalPnl, getTotalBetAmount, type Outcome, type ReviewConclusion, type BetRecord, type AbandonedRecord } from "@/lib/mock-data";
-import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, calcYearStats, calcWeekStats, calcAllTimeStats, syncPendingReview, countToday, dailyBetLimitFor, calcLockState, calcDailyPnlSeries, calcWeeklyPnlSeries, type LockState } from "@/lib/storage";
+import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, calcYearStats, calcWeekStats, calcAllTimeStats, syncPendingReview, countToday, dailyBetLimitFor, calcLockState, calcDailyPnlSeries, calcWeeklyPnlSeries, formatLockMessage, type LockState } from "@/lib/storage";
 import { calcPnl, weekStart, weekEnd, matchDayKey, matchDayStart, parseKickoff, formatBetDirection } from "@/lib/types";
 import PnlBars from "@/components/pnl-bars";
 // Hero combines PnL and goal tracking; home orchestrates glass UI accented with sparkline + halo.
@@ -249,9 +249,7 @@ export default function HomePage() {
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-loss animate-pulse shrink-0" />
             <p className="text-xs font-semibold text-loss flex-1">
-              {lockState.reason === "monthly_drawdown"
-                ? `月度亏损已达上限，${lockState.unlockLabel} 前不可下注`
-                : `今日亏损已达上限，${lockState.unlockLabel} 前强制走观察`}
+              {formatLockMessage(lockState)}
             </p>
           </div>
           <p className="text-[10px] text-loss/70 mt-0.5 ml-4">
