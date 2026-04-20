@@ -152,7 +152,7 @@ export default function ScreeningPage() {
 
   // ─── Pool ───────────────────────────────────────────
   const [pool, setPool] = useState<ScreeningItem[]>([]);
-  const [passExpanded, setPassExpanded] = useState(false);
+  const [passExpanded, setPassExpanded] = useState(true);
 
   useEffect(() => { setPool(getScreeningPool()); }, []);
 
@@ -581,9 +581,15 @@ function ScreeningRow({
   const conf = item.deduction?.confidence ?? 0;
   const trap = item.deduction?.suspectedTrap;
   const hasNew = !!item.deduction;
+  const canEdit = !item.promotedToBetId;
   return (
     <div className={`flex items-center gap-2 bg-card/80 rounded px-2 py-2 ${stale ? "opacity-60" : ""} ${isEditing ? "ring-1 ring-foreground/30" : ""}`}>
-      <div className="flex-1 min-w-0">
+      <button
+        onClick={() => canEdit && onEdit(item)}
+        disabled={!canEdit}
+        className="flex-1 min-w-0 text-left"
+        aria-label="编辑扫盘条目"
+      >
         <div className="flex items-center gap-1.5">
           <p className="text-xs font-semibold truncate">{title}</p>
           {isEditing && (
@@ -617,12 +623,12 @@ function ScreeningRow({
         {item.promotedToBetId && (
           <p className="text-[9px] text-muted-foreground/60 mt-0.5">已深挖完复盘</p>
         )}
-      </div>
-      {!item.promotedToBetId && (
+      </button>
+      {canEdit && (
         <button onClick={() => onEdit(item)}
-          className="shrink-0 p-1.5 text-muted-foreground/80"
+          className="shrink-0 px-2 py-1 rounded border border-border text-muted-foreground text-[10px] font-semibold flex items-center gap-1"
           aria-label="编辑"
-        ><Pencil size={12} /></button>
+        ><Pencil size={10} /> 编辑</button>
       )}
       {!item.promotedToBetId && item.bucket !== "pass" && (
         <button onClick={() => onDig(item)}
