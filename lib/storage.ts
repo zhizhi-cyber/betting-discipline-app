@@ -3,6 +3,9 @@ import type {
   AbandonedRecord,
   UnifiedRecord,
   CompletionStatus,
+  HandicapDeduction,
+  HandicapValue,
+  BettingDirection,
 } from "./types";
 import { calcPnl, matchDayStart, matchDayKey, parseKickoff, errorWeightOf, type AppSettings } from "./types";
 export type { AppSettings } from "./types";
@@ -376,18 +379,21 @@ export function calcLockState(now: Date = new Date(), settings?: AppSettings): L
   }
 
   // 连败硬锁（连胜只是 soft warning，连败才是追损风险）
-  //  连败 ≥ 3 → 锁 1 天（从次日起算，即今天剩余 + 明天整天）
-  //  连败 ≥ 5 → 锁 2 天（今天剩余 + 明后两天）
-  //  锁到"次日 10:00 + N 天"。
+  //  递增规则：连败 3 → 锁 1 天；之后每再 2 场连败 +1 天
+  //   streak=3,4 → 1 天
+  //   streak=5,6 → 2 天
+  //   streak=7,8 → 3 天
+  //  "从次日起算 N 天" ⇒ unlockAt = 今天 10:00 + (N + 1) 天
   const streak = calcLossStreak(bets);
   if (streak >= 3) {
+    const lockDays = 1 + Math.floor((streak - 3) / 2);
     state.locked = true;
     state.lossStreak = streak;
     const anchor = matchDayStart(now); // 今天 10:00
-    const days = streak >= 5 ? 3 : 2;  // 5 连败 → +3 天（今日+明+后）；3 连败 → +2 天（今日+明）
-    anchor.setDate(anchor.getDate() + days);
+    anchor.setDate(anchor.getDate() + lockDays + 1);
     state.unlockAt = anchor.toISOString();
     state.unlockLabel = `${anchor.getMonth() + 1}月${anchor.getDate()}日 10:00`;
+    // 简化为单一 reason；文案用 lossStreak 动态生成
     state.reason = streak >= 5 ? "loss_streak_5" : "loss_streak_3";
     return state;
   }
@@ -458,11 +464,10 @@ export function formatLockMessage(lock: LockState): string {
   if (lock.reason === "monthly_drawdown") {
     return `月度亏损达上限，${when} 前暂停下注`;
   }
-  if (lock.reason === "loss_streak_5") {
-    return `连败 ${lock.lossStreak ?? 5} 场，强制休息至 ${when}（抗 tilt）`;
-  }
-  if (lock.reason === "loss_streak_3") {
-    return `连败 ${lock.lossStreak ?? 3} 场，强制休息至 ${when}（抗追损）`;
+  if (lock.reason === "loss_streak_5" || lock.reason === "loss_streak_3") {
+    const streak = lock.lossStreak ?? 3;
+    const days = 1 + Math.floor((streak - 3) / 2);
+    return `连败 ${streak} 场，强制休息 ${days} 天（至 ${when}）`;
   }
   // daily_loss 现在强制休息一整天（锁到后天 10:00）
   return `今日亏损达上限，强制休息至 ${when}（期间不得下注与补录）`;
@@ -1060,10 +1065,27 @@ export interface ScreeningItem {
   homeTeam?: string;
   awayTeam?: string;
   kickoffTime?: string;
-  reliability: "A" | "B" | "C";  // 可靠吗
-  trap:        "A" | "B" | "C";  // 有陷阱吗
-  bookie:      "A" | "B" | "C";  // 庄家立场明吗
-  bucket: "dig" | "gray" | "pass";  // 全A=dig / 混合=gray / 有B=pass
+
+  // 盘口信息（可选；深挖时预填 review）
+  handicapSide?: "home" | "away";
+  handicapValue?: HandicapValue;
+  bettingDirection?: BettingDirection;
+
+  // 盘口推演（核心）—— 来自 review 页的 HandicapDeduction
+  deduction?: HandicapDeduction;
+
+  // 变盘（选填，与 review 页同口径）
+  openHandicap?: string;
+  openOdds?: number;
+  closeHandicap?: string;
+  closeOdds?: number;
+
+  // 旧版 A/B/C 三问（仅保留兼容读取，新数据不再写）
+  reliability?: "A" | "B" | "C";
+  trap?:        "A" | "B" | "C";
+  bookie?:      "A" | "B" | "C";
+
+  bucket: "dig" | "gray" | "pass";  // 手动选：深挖 / 灰色 / 放弃
   note?: string;
   promotedToBetId?: string;     // 如已深挖到完整复盘，记录链路
 }
@@ -1096,10 +1118,21 @@ export function isScreeningStale(item: ScreeningItem, now: Date = new Date()): b
   return age > 24 * 60 * 60 * 1000;
 }
 
-/** 判 bucket：全 A=dig；出现任何 B=pass（最差信号优先）；其它=gray。 */
+/** 旧版 A/B/C bucket 判定（保留供历史数据读取） */
 export function screeningBucket(r: "A"|"B"|"C", t: "A"|"B"|"C", b: "A"|"B"|"C"): "dig" | "gray" | "pass" {
   if (r === "B" || t === "B" || b === "B") return "pass";
   if (r === "A" && t === "A" && b === "A") return "dig";
+  return "gray";
+}
+
+/**
+ * 根据盘口推演自动推荐 bucket（用户可覆盖）
+ * 规则：suspectedTrap → pass；信心度 ≥4 → dig；否则 gray。
+ */
+export function suggestBucketFromDeduction(d: HandicapDeduction | undefined): "dig" | "gray" | "pass" {
+  if (!d) return "gray";
+  if (d.suspectedTrap) return "pass";
+  if (d.confidence >= 4) return "dig";
   return "gray";
 }
 

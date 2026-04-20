@@ -57,12 +57,16 @@ function CountUp({ value, className }: { value: number; className?: string }) {
 
 // ─── Progress Ring ────────────────────────────────────────────────────────────
 
-function ProgressRing({ percent, size = 72, color }: { percent: number; size?: number; color: string }) {
+function ProgressRing({ percent, displayPercent, size = 72, color }: { percent: number; displayPercent?: number; size?: number; color: string }) {
   const stroke = 6;
   const radius = (size - stroke) / 2;
   const circ = 2 * Math.PI * radius;
   const clamped = Math.max(0, Math.min(100, percent));
   const offset = circ - (clamped / 100) * circ;
+  const shown = displayPercent ?? clamped;
+  const isNeg = shown < 0;
+  // 亏损时缩字号，保证 "-NN%" 不溢出环
+  const fontSize = Math.abs(shown) >= 100 ? size * 0.22 : isNeg ? size * 0.23 : size * 0.26;
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }}>
       <svg width={size} height={size} className="absolute inset-0">
@@ -79,8 +83,8 @@ function ProgressRing({ percent, size = 72, color }: { percent: number; size?: n
         />
       </svg>
       <div className="absolute inset-0 flex items-center justify-center">
-        <span className="font-mono font-black text-foreground" style={{ fontSize: size * 0.26 }}>
-          {Math.round(clamped)}%
+        <span className={`font-mono font-black ${isNeg ? "text-loss" : "text-foreground"}`} style={{ fontSize }}>
+          {isNeg ? "\u2212" : ""}{Math.round(Math.abs(shown))}%
         </span>
       </div>
     </div>
@@ -275,7 +279,8 @@ export default function HomePage() {
   const overWatch = todayCount.watches >= dailyLimits.watches;
 
   const hasTarget = target > 0 && timeRange !== "all";
-  const progress = hasTarget ? Math.max(0, Math.min(100, (stats.totalPnl / target) * 100)) : 0;
+  const rawProgress = hasTarget ? (stats.totalPnl / target) * 100 : 0;
+  const progress = Math.max(0, Math.min(100, rawProgress));
   const gap = target - stats.totalPnl;
   const hasData = stats.totalBet > 0;
   const isProfit = stats.totalPnl > 0;
@@ -406,7 +411,7 @@ export default function HomePage() {
                 )}
               </div>
               {hasTarget && (
-                <ProgressRing percent={progress} size={68} color={profitColor} />
+                <ProgressRing percent={progress} displayPercent={rawProgress} size={68} color={profitColor} />
               )}
             </div>
 

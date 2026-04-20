@@ -270,7 +270,7 @@ function ReviewInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editBetId, editWatchId]);
 
-  // 从"今日扫盘"深挖：读 ?screening=id，预填比赛信息 + 3 个子维度
+  // 从"今日扫盘"深挖：读 ?screening=id，预填比赛信息 + 盘口推演
   useEffect(() => {
     if (!screeningId || isEditing) return;
     const item = getScreeningPool().find((x) => x.id === screeningId);
@@ -279,23 +279,27 @@ function ReviewInner() {
     if (item.homeTeam) setHomeTeam(item.homeTeam);
     if (item.awayTeam) setAwayTeam(item.awayTeam);
     if (item.kickoffTime) setKickoffTime(toDateTimeLocalValue(item.kickoffTime));
-    // 三问 → 3 个子维度（同语义：A=好 / B=差 / C=中性）
-    setScores((p) => {
-      const next = { ...p };
-      next.reliability = {
-        ...p.reliability,
-        subdims: { ...p.reliability.subdims, clarity: item.reliability },
-      };
-      next.trap = {
-        ...p.trap,
-        subdims: { ...p.trap.subdims, trap: item.trap },
-      };
-      next.bookie = {
-        ...p.bookie,
-        subdims: { ...p.bookie.subdims, confidence: item.bookie },
-      };
-      return next;
-    });
+    if (item.handicapSide) setHandicapSide(item.handicapSide);
+    if (item.handicapValue) setHandicapValue(item.handicapValue as HandicapValue);
+    if (item.bettingDirection) setBettingDirection(item.bettingDirection);
+    if (item.deduction) setDeduction(item.deduction);
+    if (item.openHandicap) setOpenHandicap(item.openHandicap);
+    if (item.openOdds != null) setOpenOdds(String(item.openOdds));
+    if (item.closeHandicap) setCloseHandicap(item.closeHandicap);
+    if (item.closeOdds != null) setCloseOdds(String(item.closeOdds));
+    if (item.openHandicap || item.openOdds != null || item.closeHandicap || item.closeOdds != null) {
+      setShowLineMove(true);
+    }
+    // 兼容旧数据：如果只存了 A/B/C 三问，映射回 3 个子维度
+    if (!item.deduction && (item.reliability || item.trap || item.bookie)) {
+      setScores((p) => {
+        const next = { ...p };
+        if (item.reliability) next.reliability = { ...p.reliability, subdims: { ...p.reliability.subdims, clarity: item.reliability } };
+        if (item.trap) next.trap = { ...p.trap, subdims: { ...p.trap.subdims, trap: item.trap } };
+        if (item.bookie) next.bookie = { ...p.bookie, subdims: { ...p.bookie.subdims, confidence: item.bookie } };
+        return next;
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screeningId]);
 
