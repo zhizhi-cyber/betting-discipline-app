@@ -306,7 +306,7 @@ export default function HomePage() {
             {lockState.reason === "monthly_drawdown"
               ? `当月累计 \u2212¥${Math.abs(lockState.monthlyPnl).toLocaleString()} / 上限 \u2212¥${lockState.monthlyMaxDrawdown.toLocaleString()}`
               : lockState.reason === "loss_streak_5" || lockState.reason === "loss_streak_3"
-              ? `连败 ${lockState.lossStreak ?? 0} 场 · 从次日起算${lockState.reason === "loss_streak_5" ? 2 : 1}天`
+              ? `连败 ${lockState.lossStreak ?? 0} 场 · 从次日起算 ${lockState.lockDays ?? 1} 天`
               : `今日累计 \u2212¥${Math.abs(lockState.dailyPnl).toLocaleString()} / 上限 \u2212¥${lockState.dailyLossLimit.toLocaleString()}`}
           </p>
         </div>
