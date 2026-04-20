@@ -23,7 +23,7 @@ export default function WeeklyDigest({
   const thisMonday = weekStart(now);
   const lastMonday = new Date(thisMonday); lastMonday.setDate(thisMonday.getDate() - 7);
 
-  const { thisWeek, lastWeek, weekBets, weekWatches } = useMemo(() => {
+  const { thisWeek, lastWeek, weekBets, weekWatches, lastWeekBets, lastWeekWatches } = useMemo(() => {
     const thisStart = new Date(thisMonday); thisStart.setHours(10, 0, 0, 0);
     const thisEnd = new Date(thisStart); thisEnd.setDate(thisEnd.getDate() + 7);
     const lastStart = new Date(lastMonday); lastStart.setHours(10, 0, 0, 0);
@@ -36,16 +36,30 @@ export default function WeeklyDigest({
 
     const wb = allBets.filter((r) => inRange(r.kickoffTime, thisStart, thisEnd));
     const ww = allWatches.filter((r) => inRange(r.kickoffTime, thisStart, thisEnd));
+    const lwb = allBets.filter((r) => inRange(r.kickoffTime, lastStart, lastEnd));
+    const lww = allWatches.filter((r) => inRange(r.kickoffTime, lastStart, lastEnd));
 
     return {
       thisWeek: calcWeekStats(thisMonday),
       lastWeek: calcWeekStats(lastMonday),
       weekBets: wb,
       weekWatches: ww,
+      lastWeekBets: lwb,
+      lastWeekWatches: lww,
     };
   }, [allBets, allWatches, thisMonday, lastMonday]);
 
   const analytics = useMemo(() => calcRecordsAnalytics(weekBets, weekWatches), [weekBets, weekWatches]);
+  const lastAnalytics = useMemo(() => calcRecordsAnalytics(lastWeekBets, lastWeekWatches), [lastWeekBets, lastWeekWatches]);
+
+  // 未结算提示
+  const unsettled = weekBets.filter((r) => !r.result).length;
+
+  // 再犯失误：上周 top 3 与本周交集
+  const repeats = useMemo(() => {
+    const lastTop = new Set(lastAnalytics.errorTop.slice(0, 3).map((e) => e.err));
+    return analytics.errorTop.filter((e) => lastTop.has(e.err)).slice(0, 3);
+  }, [analytics.errorTop, lastAnalytics.errorTop]);
 
   const pnlDelta = thisWeek.totalPnl - lastWeek.totalPnl;
   const roiDelta = thisWeek.roi - lastWeek.roi;
@@ -65,6 +79,13 @@ export default function WeeklyDigest({
         </div>
 
         <div className="px-4 py-4 space-y-4">
+          {/* 未结算提示 */}
+          {unsettled > 0 && (
+            <div className="rounded border border-warning/30 bg-warning/10 px-3 py-2 text-[10px] text-warning/90 leading-relaxed">
+              ⚠ 本周还有 <span className="font-mono tabular-nums font-bold">{unsettled}</span> 场未结算，下面数字暂为临时值；等全部结算后数据才定。
+            </div>
+          )}
+
           {/* Hero: 本周 PnL */}
           <div className="rounded-lg bg-card p-4 text-center">
             <p className="text-[10px] text-muted-foreground uppercase tracking-wider">本周盈亏</p>
@@ -127,10 +148,32 @@ export default function WeeklyDigest({
             <div>
               <p className="text-[10px] font-bold text-muted-foreground mb-1.5 uppercase tracking-wider">主要失误</p>
               <div className="space-y-1">
-                {analytics.errorTop.slice(0, 3).map((e) => (
-                  <div key={e.err} className="flex items-center justify-between text-[11px] px-2 py-1.5 rounded bg-card/60">
+                {analytics.errorTop.slice(0, 3).map((e) => {
+                  const sLabel = e.weight === 3 ? "重" : e.weight === 2 ? "中" : "轻";
+                  const sCls = e.weight === 3 ? "text-loss border-loss/40" : e.weight === 2 ? "text-warning border-warning/40" : "text-muted-foreground border-border";
+                  return (
+                    <div key={e.err} className="flex items-center justify-between text-[11px] px-2 py-1.5 rounded bg-card/60">
+                      <div className="flex items-center gap-1.5 min-w-0 pr-2">
+                        <span className={`text-[9px] font-bold px-1 rounded border ${sCls}`}>{sLabel}</span>
+                        <span className="text-foreground/80 truncate">{e.err}</span>
+                      </div>
+                      <span className="font-mono tabular-nums text-loss font-semibold">{e.count} 次</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 再犯提醒：上周 top 3 本周又犯 */}
+          {repeats.length > 0 && (
+            <div className="rounded border border-loss/30 bg-loss/10 px-3 py-2">
+              <p className="text-[10px] font-bold text-loss mb-1 uppercase tracking-wider">⚠ 再犯的失误</p>
+              <div className="space-y-1">
+                {repeats.map((e) => (
+                  <div key={e.err} className="flex items-center justify-between text-[11px]">
                     <span className="text-foreground/80 truncate pr-2">{e.err}</span>
-                    <span className="font-mono tabular-nums text-loss font-semibold">{e.count} 次</span>
+                    <span className="font-mono tabular-nums text-loss font-semibold shrink-0">本周 {e.count} 次（上周已犯）</span>
                   </div>
                 ))}
               </div>

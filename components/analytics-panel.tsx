@@ -136,47 +136,61 @@ export default function AnalyticsPanel({
           )}
 
           {a.errorTop.length > 0 && (
-            <GlassCard title="失误类型" icon={<AlertCircle size={10} strokeWidth={2} />}>
+            <GlassCard title="失误类型（加权）" icon={<AlertCircle size={10} strokeWidth={2} />}>
               <div className="space-y-1">
-                {a.errorTop.slice(0, 3).map((e) => (
-                  <div key={e.err} className="flex items-center justify-between text-[10px]">
-                    <span className="text-foreground/80 truncate pr-1">{e.err}</span>
-                    <span className="font-mono tabular-nums text-loss font-semibold shrink-0">{e.count} 次</span>
-                  </div>
-                ))}
+                {a.errorTop.slice(0, 3).map((e) => {
+                  const sLabel = e.weight === 3 ? "重" : e.weight === 2 ? "中" : "轻";
+                  const sColor = e.weight === 3 ? "text-loss" : e.weight === 2 ? "text-warning" : "text-muted-foreground";
+                  return (
+                    <div key={e.err} className="flex items-center justify-between text-[10px]">
+                      <div className="flex items-center gap-1 min-w-0 pr-1">
+                        <span className={`text-[8px] font-bold px-1 rounded border border-current/30 ${sColor}`}>{sLabel}</span>
+                        <span className="text-foreground/80 truncate">{e.err}</span>
+                      </div>
+                      <span className="font-mono tabular-nums text-loss font-semibold shrink-0">{e.count} 次</span>
+                    </div>
+                  );
+                })}
+                {a.avgErrorSeverity !== null && (
+                  <p className="text-[9px] text-muted-foreground/60 mt-1 font-mono">
+                    平均严重度 {a.avgErrorSeverity.toFixed(2)} / 3
+                  </p>
+                )}
               </div>
             </GlassCard>
           )}
         </div>
       )}
 
-      {/* 行为类：平均赛前时长 + 深夜单 */}
-      {(a.avgLeadMinutes !== null || a.lateNight.count > 0) && (
-        <div className="grid grid-cols-2 gap-2">
+      {/* 赛前时长分桶 ROI：早盘/近赛/临盘 */}
+      {(a.leadBuckets.early.count + a.leadBuckets.near.count + a.leadBuckets.last.count) > 0 && (
+        <GlassCard title="赛前时长分桶" icon={<Clock size={10} strokeWidth={2} />}>
+          <div className="grid grid-cols-3 gap-2">
+            <LeadBucket label="早盘" sub=">4h" data={a.leadBuckets.early} />
+            <LeadBucket label="近赛" sub="1-4h" data={a.leadBuckets.near} />
+            <LeadBucket label="临盘" sub="<1h" data={a.leadBuckets.last} />
+          </div>
           {a.avgLeadMinutes !== null && (
-            <GlassCard title="平均赛前下单" icon={<Clock size={10} strokeWidth={2} />}>
-              <p className="text-sm font-black font-mono tabular-nums">
-                {formatLead(a.avgLeadMinutes)}
-              </p>
-              <p className="text-[9px] text-muted-foreground/60 mt-0.5">
-                {a.avgLeadMinutes < 30 ? "偏临开赛，警惕冲动" : a.avgLeadMinutes < 120 ? "节奏偏紧" : "准备较充分"}
-              </p>
-            </GlassCard>
+            <p className="text-[9px] text-muted-foreground/60 mt-2 font-mono">
+              平均 {formatLead(a.avgLeadMinutes)} · {a.avgLeadMinutes < 30 ? "偏临盘" : a.avgLeadMinutes < 120 ? "节奏偏紧" : "准备较充分"}
+            </p>
           )}
-          {a.lateNight.count > 0 && (
-            <GlassCard title="深夜单 (0-6点)" icon={<Moon size={10} strokeWidth={2} />}>
-              <div className="flex items-baseline gap-1.5">
-                <span className="text-sm font-black font-mono tabular-nums">{a.lateNight.count}</span>
-                <span className="text-[9px] text-muted-foreground">场</span>
-              </div>
-              {a.lateNight.settled > 0 && (
-                <p className="text-[9px] text-muted-foreground/70 mt-0.5 font-mono tabular-nums">
-                  胜{a.lateNight.winRate.toFixed(0)}% · ROI {a.lateNight.roi >= 0 ? "+" : ""}{a.lateNight.roi.toFixed(0)}%
-                </p>
-              )}
-            </GlassCard>
+        </GlassCard>
+      )}
+
+      {/* 深夜单 */}
+      {a.lateNight.count > 0 && (
+        <GlassCard title="深夜单 (0-6点)" icon={<Moon size={10} strokeWidth={2} />}>
+          <div className="flex items-baseline gap-1.5">
+            <span className="text-sm font-black font-mono tabular-nums">{a.lateNight.count}</span>
+            <span className="text-[9px] text-muted-foreground">场</span>
+          </div>
+          {a.lateNight.settled > 0 && (
+            <p className="text-[9px] text-muted-foreground/70 mt-0.5 font-mono tabular-nums">
+              胜{a.lateNight.winRate.toFixed(0)}% · ROI {a.lateNight.roi >= 0 ? "+" : ""}{a.lateNight.roi.toFixed(0)}%
+            </p>
           )}
-        </div>
+        </GlassCard>
       )}
 
       {/* 纪律分详情 drawer */}
@@ -279,6 +293,30 @@ export default function AnalyticsPanel({
           </div>
         </GlassCard>
       )}
+    </div>
+  );
+}
+
+function LeadBucket({
+  label, sub, data,
+}: {
+  label: string;
+  sub: string;
+  data: { count: number; settled: number; winRate: number; roi: number };
+}) {
+  const has = data.settled > 0;
+  const roiCls = !has ? "text-muted-foreground/50"
+    : data.roi > 0 ? "text-profit" : data.roi < 0 ? "text-loss" : "text-muted-foreground";
+  return (
+    <div className="rounded bg-card/50 px-2 py-1.5 text-center">
+      <p className="text-[9px] font-bold">{label}</p>
+      <p className="text-[8px] text-muted-foreground/60 font-mono">{sub}</p>
+      <p className={`text-xs font-black font-mono tabular-nums mt-1 ${roiCls}`}>
+        {has ? `${data.roi >= 0 ? "+" : ""}${data.roi.toFixed(0)}%` : "—"}
+      </p>
+      <p className="text-[8px] text-muted-foreground/60 mt-0.5 font-mono">
+        {data.count} 场{has ? ` · 胜${data.winRate.toFixed(0)}%` : ""}
+      </p>
     </div>
   );
 }

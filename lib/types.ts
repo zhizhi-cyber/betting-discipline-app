@@ -504,6 +504,40 @@ export function errorCategoryOf(label: string): string {
   return "其他";
 }
 
+/**
+ * 失误严重度（1=轻 / 2=中 / 3=重）。
+ * 重 = 可修正的结构性判断错（盘口/庄家/伤停）
+ * 中 = 读盘/判势类（状态、变盘、陷阱）
+ * 轻 = 运气项（不可控）
+ */
+export const ERROR_WEIGHTS: Record<string, 1 | 2 | 3> = {
+  // 基本面
+  "状态看错": 2,
+  "伤停没掌握": 3,
+  "主客场忽略": 2,
+  "冷热度误判": 2,
+  // 盘口
+  "水位没看懂": 3,
+  "变盘没看懂": 2,
+  "开盘倾向读错": 2,
+  // 庄家
+  "立场误判": 3,
+  "倒赔中招": 3,
+  "陷阱上钩": 2,
+  // 运气
+  "补时绝杀": 1,
+  "红黄牌影响": 1,
+  "乌龙/误判": 1,
+};
+
+export function errorWeightOf(label: string): 1 | 2 | 3 {
+  return ERROR_WEIGHTS[label] ?? 2;
+}
+
+export function errorSeverityLabel(w: 1 | 2 | 3): string {
+  return w === 3 ? "重" : w === 2 ? "中" : "轻";
+}
+
 export const DECISION_RATING_LABELS: Record<number, string> = {
   1: "差", 2: "勉强", 3: "尚可", 4: "良好", 5: "优秀",
 };

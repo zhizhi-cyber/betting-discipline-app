@@ -381,6 +381,21 @@ function ReviewInner() {
     return "";
   }, [hardStopped, hardFailChips, totalScore]);
 
+  // 子维度完成度：已填答案数 / 总子维度数（22）
+  const { filledSubdims, totalSubdims, fillPct } = useMemo(() => {
+    let filled = 0;
+    let total = 0;
+    (Object.keys(SUBDIMS) as (keyof typeof SUBDIMS)[]).forEach((cat) => {
+      const subs = SUBDIMS[cat];
+      total += subs.length;
+      const cur = scores[cat as keyof typeof scores]?.subdims ?? {};
+      for (const s of subs) {
+        if (cur[s.key]) filled++;
+      }
+    });
+    return { filledSubdims: filled, totalSubdims: total, fillPct: total > 0 ? (filled / total) * 100 : 0 };
+  }, [scores]);
+
   // Basic fields ready?
   const coreReady = matchName && homeTeam && awayTeam && handicapSide && handicapValue && bettingDirection;
 
@@ -469,8 +484,17 @@ function ReviewInner() {
     return ok;
   };
 
+  // 草率保存防护：子维度填 < 50% 弹确认。仅新下注路径（非编辑）生效，避免编辑旧单误报。
+  const guardRashFill = (): boolean => {
+    if (isEditingBet || isEditingWatch) return true;
+    if (fillPct >= 50) return true;
+    const missing = totalSubdims - filledSubdims;
+    return confirm(`还有 ${missing} 个子维度没填（完成度 ${fillPct.toFixed(0)}%），确定要下注吗？\n建议返回把可靠性/陷阱/庄家维度填完再下单。`);
+  };
+
   const handleOpenConfirm = () => {
     if (!validateCore()) return;
+    if (!guardRashFill()) return;
     setConfirmAmount(suggestedAmount.toString());
     setConfirmAmountError("");
     setConfirmMode(isEditingBet ? "edit" : "new");
@@ -479,6 +503,7 @@ function ReviewInner() {
 
   const handleOpenPromote = () => {
     if (!validateCore()) return;
+    if (!guardRashFill()) return;
     setConfirmAmount(suggestedAmount.toString());
     setConfirmAmountError("");
     setConfirmMode("promote");
@@ -1118,7 +1143,22 @@ function ReviewInner() {
 
         {/* ── 5 discipline categories ────────────────────────────── */}
         <section>
-          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-2">纪律评分</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">纪律评分</p>
+            <p className="text-[10px] text-muted-foreground font-mono tabular-nums">
+              子维度 {filledSubdims}/{totalSubdims}
+              <span className={`ml-1 ${fillPct >= 70 ? "text-profit" : fillPct >= 40 ? "text-warning" : "text-loss"}`}>
+                {fillPct.toFixed(0)}%
+              </span>
+            </p>
+          </div>
+          {/* 完成度条 */}
+          <div className="h-1 bg-muted rounded-full overflow-hidden mb-2">
+            <div
+              className={`h-full transition-all ${fillPct >= 70 ? "bg-profit" : fillPct >= 40 ? "bg-warning" : "bg-loss"}`}
+              style={{ width: `${fillPct}%` }}
+            />
+          </div>
           <div className="space-y-2">
             {SCORE_CATEGORIES.map(({ key, title, badge }) => {
               const cat = scores[key];

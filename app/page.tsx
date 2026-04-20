@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Plus, Settings, ChevronRight, Target, Activity, TrendingUp } from "lucide-react";
 import { motion, useMotionValue, useTransform, animate } from "motion/react";
 import { getTotalPnl, getTotalBetAmount, type Outcome, type ReviewConclusion, type BetRecord, type AbandonedRecord } from "@/lib/mock-data";
-import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, calcYearStats, calcWeekStats, calcAllTimeStats, syncPendingReview, countToday, dailyBetLimitFor, calcLockState, calcDailyPnlSeries, calcWeeklyPnlSeries, formatLockMessage, shouldShowWeeklyDigest, markWeeklyDigestSeen, type LockState } from "@/lib/storage";
+import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, calcYearStats, calcWeekStats, calcAllTimeStats, syncPendingReview, countToday, dailyBetLimitFor, calcLockState, calcDailyPnlSeries, calcWeeklyPnlSeries, formatLockMessage, shouldShowWeeklyDigest, markWeeklyDigestSeen, calcCooldownRemaining, type LockState } from "@/lib/storage";
 import { calcPnl, weekStart, weekEnd, matchDayKey, matchDayStart, parseKickoff, formatBetDirection } from "@/lib/types";
 import PnlBars from "@/components/pnl-bars";
 import WeeklyDigest from "@/components/weekly-digest";
@@ -104,6 +104,7 @@ export default function HomePage() {
   const [allAbandoned, setAllAbandoned] = useState<AbandonedRecord[]>([]);
   const [lockState, setLockState] = useState<LockState | null>(null);
   const [weeklyDigestOpen, setWeeklyDigestOpen] = useState(false);
+  const [cooldown, setCooldown] = useState<{ active: boolean; remainingSec: number }>({ active: false, remainingSec: 0 });
 
   // Initial load
   useEffect(() => {
@@ -118,9 +119,21 @@ export default function HomePage() {
     setAllBets(getBetRecords());
     setAllAbandoned(getAbandonedRecords());
     setLockState(calcLockState(new Date(), settings));
+    setCooldown(calcCooldownRemaining(new Date(), settings));
     if (shouldShowWeeklyDigest()) setWeeklyDigestOpen(true);
     setMounted(true);
   }, []);
+
+  // 冷静期倒计时 ticker：每 10 秒刷新一次直到结束
+  useEffect(() => {
+    if (!cooldown.active) return;
+    const id = setInterval(() => {
+      const cd = calcCooldownRemaining(new Date());
+      setCooldown(cd);
+      if (!cd.active) clearInterval(id);
+    }, 10_000);
+    return () => clearInterval(id);
+  }, [cooldown.active]);
 
   // A5 跨 tab 同步：监听 localStorage 变更 + 标签页切回前台时刷新，防止另一 tab
   // 保存/编辑后本 tab 看到的是旧数据（lockState / todayCount 漂移）
@@ -287,8 +300,22 @@ export default function HomePage() {
           <p className="text-[10px] text-loss/70 mt-0.5 ml-4 font-mono tabular-nums">
             {lockState.reason === "monthly_drawdown"
               ? `当月累计 \u2212¥${Math.abs(lockState.monthlyPnl).toLocaleString()} / 上限 \u2212¥${lockState.monthlyMaxDrawdown.toLocaleString()}`
+              : lockState.reason === "loss_streak_5" || lockState.reason === "loss_streak_3"
+              ? `连败 ${lockState.lossStreak ?? 0} 场 · 从次日起算${lockState.reason === "loss_streak_5" ? 2 : 1}天`
               : `今日累计 \u2212¥${Math.abs(lockState.dailyPnl).toLocaleString()} / 上限 \u2212¥${lockState.dailyLossLimit.toLocaleString()}`}
           </p>
+        </div>
+      )}
+
+      {/* ── Cooldown Banner (亏损后 30 分钟) ─────────────────────── */}
+      {!lockState?.locked && cooldown.active && (
+        <div className="bg-warning/10 border-b border-warning/30 px-4 py-2">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-warning animate-pulse shrink-0" />
+            <p className="text-xs font-semibold text-warning flex-1">
+              冷静期剩余 <span className="font-mono tabular-nums">{Math.floor(cooldown.remainingSec / 60)}:{String(cooldown.remainingSec % 60).padStart(2, "0")}</span> · 刚输完，别追损
+            </p>
+          </div>
         </div>
       )}
 

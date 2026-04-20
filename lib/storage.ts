@@ -4,7 +4,7 @@ import type {
   UnifiedRecord,
   CompletionStatus,
 } from "./types";
-import { calcPnl, matchDayStart, matchDayKey, parseKickoff, type AppSettings } from "./types";
+import { calcPnl, matchDayStart, matchDayKey, parseKickoff, errorWeightOf, type AppSettings } from "./types";
 export type { AppSettings } from "./types";
 
 // ─── Keys ─────────────────────────────────────────────────────────────────────
@@ -305,13 +305,15 @@ export function dailyBetLimitFor(date: Date = new Date(), settings?: AppSettings
 
 export interface LockState {
   locked: boolean;
-  reason: "daily_loss" | "monthly_drawdown" | null;
+  reason: "daily_loss" | "monthly_drawdown" | "loss_streak_3" | "loss_streak_5" | null;
   dailyPnl: number;
   monthlyPnl: number;
   dailyLossLimit: number;
   monthlyMaxDrawdown: number;
   unlockAt?: string;          // ISO; when lock ends
   unlockLabel?: string;       // human readable
+  /** 连败锁触发时的连败场次（用于 UI 显示） */
+  lossStreak?: number;
 }
 
 export function calcLockState(now: Date = new Date(), settings?: AppSettings): LockState {
@@ -373,7 +375,77 @@ export function calcLockState(now: Date = new Date(), settings?: AppSettings): L
     return state;
   }
 
+  // 连败硬锁（连胜只是 soft warning，连败才是追损风险）
+  //  连败 ≥ 3 → 锁 1 天（从次日起算，即今天剩余 + 明天整天）
+  //  连败 ≥ 5 → 锁 2 天（今天剩余 + 明后两天）
+  //  锁到"次日 10:00 + N 天"。
+  const streak = calcLossStreak(bets);
+  if (streak >= 3) {
+    state.locked = true;
+    state.lossStreak = streak;
+    const anchor = matchDayStart(now); // 今天 10:00
+    const days = streak >= 5 ? 3 : 2;  // 5 连败 → +3 天（今日+明+后）；3 连败 → +2 天（今日+明）
+    anchor.setDate(anchor.getDate() + days);
+    state.unlockAt = anchor.toISOString();
+    state.unlockLabel = `${anchor.getMonth() + 1}月${anchor.getDate()}日 10:00`;
+    state.reason = streak >= 5 ? "loss_streak_5" : "loss_streak_3";
+    return state;
+  }
+
   return state;
+}
+
+/** 近期已结算单按下注时间倒序，取首段连败长度（含输半；走盘忽略不打断）。 */
+function calcLossStreak(bets: BetRecord[]): number {
+  const settled = bets
+    .filter((b) => b.result)
+    .slice()
+    .sort((a, b) => {
+      const ta = new Date(a.bets[0]?.betTime || a.createdAt).getTime();
+      const tb = new Date(b.bets[0]?.betTime || b.createdAt).getTime();
+      return tb - ta;
+    });
+  let n = 0;
+  for (const b of settled) {
+    const o = b.result!.outcome;
+    if (o === "push") continue;
+    if (o === "loss" || o === "half_loss") n++;
+    else break;
+  }
+  return n;
+}
+
+/** 冷静期倒计时：仅最近一笔"输/输半"在 cooldownMinutes 以内才 active。 */
+export function calcCooldownRemaining(
+  now: Date = new Date(),
+  settings?: AppSettings
+): { active: boolean; remainingMin: number; remainingSec: number; activeUntilISO: string | null } {
+  const s = settings ?? getSettings();
+  const cd = s.riskControls.cooldownMinutes ?? 30;
+  if (cd <= 0) return { active: false, remainingMin: 0, remainingSec: 0, activeUntilISO: null };
+  const bets = getBetRecords();
+  const sortedSettled = bets
+    .filter((b) => b.result)
+    .slice()
+    .sort((a, b) => {
+      const ta = new Date(a.bets[0]?.betTime || a.createdAt).getTime();
+      const tb = new Date(b.bets[0]?.betTime || b.createdAt).getTime();
+      return tb - ta;
+    });
+  const lastLoss = sortedSettled.find(
+    (b) => b.result!.outcome === "loss" || b.result!.outcome === "half_loss"
+  );
+  if (!lastLoss) return { active: false, remainingMin: 0, remainingSec: 0, activeUntilISO: null };
+  const t = new Date(lastLoss.bets[0]?.betTime || lastLoss.createdAt).getTime();
+  const until = t + cd * 60000;
+  const remainingMs = until - now.getTime();
+  if (remainingMs <= 0) return { active: false, remainingMin: 0, remainingSec: 0, activeUntilISO: null };
+  return {
+    active: true,
+    remainingMin: Math.ceil(remainingMs / 60000),
+    remainingSec: Math.ceil(remainingMs / 1000),
+    activeUntilISO: new Date(until).toISOString(),
+  };
 }
 
 /**
@@ -385,6 +457,12 @@ export function formatLockMessage(lock: LockState): string {
   const when = lock.unlockLabel ?? "";
   if (lock.reason === "monthly_drawdown") {
     return `月度亏损达上限，${when} 前暂停下注`;
+  }
+  if (lock.reason === "loss_streak_5") {
+    return `连败 ${lock.lossStreak ?? 5} 场，强制休息至 ${when}（抗 tilt）`;
+  }
+  if (lock.reason === "loss_streak_3") {
+    return `连败 ${lock.lossStreak ?? 3} 场，强制休息至 ${when}（抗追损）`;
   }
   // daily_loss 现在强制休息一整天（锁到后天 10:00）
   return `今日亏损达上限，强制休息至 ${when}（期间不得下注与补录）`;
@@ -674,13 +752,22 @@ export interface RecordsAnalytics {
   violationCount: number;
   streak: { type: "win" | "loss" | "none"; count: number };
   handicapRoi: { label: string; bet: number; pnl: number; roi: number; count: number }[]; // top 5
-  errorTop: { err: string; count: number }[];
+  /** 带严重度权重的失误 top；weight=1 轻/2 中/3 重 */
+  errorTop: { err: string; count: number; weight: 1 | 2 | 3 }[];
+  /** 加权平均失误严重度（已结算样本；无数据为 null） */
+  avgErrorSeverity: number | null;
   watchConversion: {
     watchedThenAbandoned: { count: number; correct: number; rate: number };  // observed and stayed abandoned — rate = would-be-correct
     watchedThenBet: { count: number; win: number; rate: number };             // observed then promoted to bet
   };
   /** 平均提前下单分钟数 (kickoff - betTime, 仅已结算有 betTime 的) */
   avgLeadMinutes: number | null;
+  /** 赛前时长分桶：早盘 >4h / 近赛 1-4h / 临盘 <1h（胜率与 ROI 同主口径） */
+  leadBuckets: {
+    early: { count: number; settled: number; winRate: number; roi: number };
+    near:  { count: number; settled: number; winRate: number; roi: number };
+    last:  { count: number; settled: number; winRate: number; roi: number };
+  };
   /** 深夜单 (00:00-06:00) 的对照统计 */
   lateNight: {
     count: number;
@@ -776,18 +863,23 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
     .sort((a, b) => b.bet - a.bet)
     .slice(0, 5);
 
-  // Error top
+  // Error top — 加权排序（weight × count），权重来自 ERROR_WEIGHTS
   const errMap = new Map<string, number>();
+  let totalErrWeight = 0;
+  let totalErrCount = 0;
   for (const r of bets) {
     if (!r.result?.errors) continue;
     for (const e of r.result.errors) {
       errMap.set(e, (errMap.get(e) ?? 0) + 1);
+      totalErrWeight += errorWeightOf(e);
+      totalErrCount += 1;
     }
   }
   const errorTop = Array.from(errMap.entries())
-    .map(([err, count]) => ({ err, count }))
-    .sort((a, b) => b.count - a.count)
+    .map(([err, count]) => ({ err, count, weight: errorWeightOf(err) }))
+    .sort((a, b) => (b.count * b.weight) - (a.count * a.weight))
     .slice(0, 5);
+  const avgErrorSeverity = totalErrCount > 0 ? totalErrWeight / totalErrCount : null;
 
   // Watch conversion
   //  - watchedThenAbandoned: stayed in watch pool, reviewed (abandon_correct = would-be-correct)
@@ -815,6 +907,43 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
     }
   }
   const avgLeadMinutes = leadN > 0 ? leadSum / leadN : null;
+
+  // 赛前时长分桶：early >4h / near 1-4h / last <1h
+  type LB = { count: number; settled: number; wins: number; halfWins: number; push: number; effBet: number; pnl: number };
+  const mk = (): LB => ({ count: 0, settled: 0, wins: 0, halfWins: 0, push: 0, effBet: 0, pnl: 0 });
+  const lb = { early: mk(), near: mk(), last: mk() };
+  for (const r of bets) {
+    const bt = r.bets[0]?.betTime;
+    if (!bt) continue;
+    const diffMin = (new Date(r.kickoffTime).getTime() - new Date(bt).getTime()) / 60000;
+    if (!(diffMin > 0 && diffMin < 60 * 24 * 7)) continue;
+    const bucket = diffMin > 240 ? lb.early : diffMin >= 60 ? lb.near : lb.last;
+    bucket.count++;
+    if (r.result) {
+      bucket.settled++;
+      const o = r.result.outcome;
+      const ratio = effRatio(o);
+      bucket.effBet += r.bets.reduce((s, b) => s + b.amount * ratio, 0);
+      bucket.pnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, o), 0);
+      if (o === "win") bucket.wins++;
+      else if (o === "half_win") bucket.halfWins++;
+      else if (o === "push") bucket.push++;
+    }
+  }
+  const finalizeBucket = (b: LB) => {
+    const nonPush = b.settled - b.push;
+    return {
+      count: b.count,
+      settled: b.settled,
+      winRate: nonPush > 0 ? ((b.wins + b.halfWins * 0.5) / nonPush) * 100 : 0,
+      roi: b.effBet > 0 ? (b.pnl / b.effBet) * 100 : 0,
+    };
+  };
+  const leadBuckets = {
+    early: finalizeBucket(lb.early),
+    near:  finalizeBucket(lb.near),
+    last:  finalizeBucket(lb.last),
+  };
 
   // 深夜单统计（00:00-06:00 根据 betTime）
   let lnCount = 0, lnSettled = 0, lnWins = 0, lnHalfWins = 0, lnPush = 0;
@@ -874,6 +1003,8 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
       },
     },
     avgLeadMinutes,
+    leadBuckets,
+    avgErrorSeverity,
     lateNight: {
       count: lnCount,
       settled: lnSettled,
@@ -955,6 +1086,14 @@ export function deleteScreeningItem(id: string): void {
 
 export function clearScreeningPool(): void {
   save(KEYS.SCREENING_POOL, []);
+}
+
+/** 扫盘条目是否已过期：>24h 未深挖 & 非 pass → 该归档到历史。 */
+export function isScreeningStale(item: ScreeningItem, now: Date = new Date()): boolean {
+  if (item.promotedToBetId) return false;
+  if (item.bucket === "pass") return false;
+  const age = now.getTime() - new Date(item.createdAt).getTime();
+  return age > 24 * 60 * 60 * 1000;
 }
 
 /** 判 bucket：全 A=dig；出现任何 B=pass（最差信号优先）；其它=gray。 */

@@ -11,6 +11,7 @@ import {
   deleteScreeningItem,
   clearScreeningPool,
   screeningBucket,
+  isScreeningStale,
   type ScreeningItem,
 } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
@@ -62,8 +63,16 @@ export default function ScreeningPage() {
   }, []);
 
   const todayKey = matchDayKey(new Date());
-  const today = useMemo(() => pool.filter((p) => p.matchDayKey === todayKey), [pool, todayKey]);
-  const earlier = useMemo(() => pool.filter((p) => p.matchDayKey !== todayKey), [pool, todayKey]);
+  const now = useMemo(() => new Date(), []);
+  // 过期条件：>24h 未深挖 & 非 pass。过期的从"今日"挪到"历史（已过期）"。
+  const today = useMemo(
+    () => pool.filter((p) => p.matchDayKey === todayKey && !isScreeningStale(p, now)),
+    [pool, todayKey, now]
+  );
+  const earlier = useMemo(
+    () => pool.filter((p) => p.matchDayKey !== todayKey || isScreeningStale(p, now)),
+    [pool, todayKey, now]
+  );
 
   const todayGroups = useMemo(() => {
     return {
@@ -312,10 +321,16 @@ function ScreeningRow({
   const kick = item.kickoffTime
     ? new Date(item.kickoffTime).toLocaleString("zh-CN", { hour: "2-digit", minute: "2-digit", month: "numeric", day: "numeric" })
     : null;
+  const stale = isScreeningStale(item);
   return (
-    <div className={`flex items-center gap-2 bg-card/80 rounded px-2 py-2 ${compact ? "" : ""}`}>
+    <div className={`flex items-center gap-2 bg-card/80 rounded px-2 py-2 ${stale ? "opacity-60" : ""}`}>
       <div className="flex-1 min-w-0">
-        <p className="text-xs font-semibold truncate">{title}</p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-xs font-semibold truncate">{title}</p>
+          {stale && (
+            <span className="shrink-0 text-[8px] px-1 py-0.5 rounded bg-muted text-muted-foreground font-semibold">已过期</span>
+          )}
+        </div>
         <div className="flex items-center gap-1.5 mt-0.5 text-[9px] font-mono text-muted-foreground/80">
           <span className="text-profit/80">可靠{item.reliability}</span>
           <span>·</span>

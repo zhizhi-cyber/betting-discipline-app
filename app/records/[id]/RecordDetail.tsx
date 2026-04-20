@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronUp, Trash2, Star, Pencil } from "lucide-react";
 import type { Outcome, BetRecord, AnalysisVerdict, ScoreData, SidedHandicap } from "@/lib/types";
-import { calcPnl, getTotalBetAmount, SUBDIMS, formatBetPreview, formatSidedHandicap, ERROR_OPTIONS, ERROR_TAXONOMY, POSITIVE_OPTIONS, parseKickoff, DECISION_RATING_LABELS } from "@/lib/types";
+import { calcPnl, getTotalBetAmount, SUBDIMS, formatBetPreview, formatSidedHandicap, ERROR_OPTIONS, ERROR_TAXONOMY, POSITIVE_OPTIONS, parseKickoff, DECISION_RATING_LABELS, errorWeightOf } from "@/lib/types";
 import { getBetRecords, saveBetRecord, deleteBetRecord } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
@@ -489,17 +489,23 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
                   <div key={grp.category}>
                     <p className="text-[10px] text-muted-foreground/70 mb-1">{grp.category}</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {grp.items.map((err) => (
-                        <button key={err} onClick={() => toggleError(err)}
-                          className={`px-2.5 py-1.5 rounded text-[11px] font-medium leading-tight transition-colors ${
-                            checkedErrors.includes(err)
-                              ? "bg-loss/15 text-loss border border-loss/30"
-                              : "bg-muted text-muted-foreground"
-                          }`}
-                        >
-                          {err}
-                        </button>
-                      ))}
+                      {grp.items.map((err) => {
+                        const w = errorWeightOf(err);
+                        const sev = w === 3 ? "重" : w === 2 ? "中" : "轻";
+                        const sevCls = w === 3 ? "text-loss" : w === 2 ? "text-warning" : "text-muted-foreground";
+                        return (
+                          <button key={err} onClick={() => toggleError(err)}
+                            className={`px-2.5 py-1.5 rounded text-[11px] font-medium leading-tight transition-colors inline-flex items-center gap-1 ${
+                              checkedErrors.includes(err)
+                                ? "bg-loss/15 text-loss border border-loss/30"
+                                : "bg-muted text-muted-foreground"
+                            }`}
+                          >
+                            <span className={`text-[8px] font-bold px-1 rounded border border-current/40 ${checkedErrors.includes(err) ? "" : sevCls}`}>{sev}</span>
+                            {err}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 ))}
