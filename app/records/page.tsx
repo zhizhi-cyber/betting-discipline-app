@@ -20,6 +20,7 @@ import { formatMoneyShort, formatSigned } from "@/lib/format";
 import BottomNav from "@/components/bottom-nav";
 import AnalyticsPanel from "@/components/analytics-panel";
 import PnlBars from "@/components/pnl-bars";
+import { useToast } from "@/components/toast";
 import RecordDetail from "./[id]/RecordDetail";
 import AbandonedDetail from "../abandoned/[id]/AbandonedDetail";
 
@@ -656,7 +657,7 @@ function YearView({
                 <span className="flex items-center gap-1"><span className="w-2 h-px" style={{ background: "#f5c842" }} />累计</span>
               </div>
             </div>
-            <PnlBars data={weeklyBarsForYear(yearBets, year)} height={160} zoomable />
+            <PnlBars data={weeklyBarsForYear(yearBets, year)} height={160} zoomable compactEmpty />
           </div>
         )}
         {hasAnyData && <AnalyticsPanel bets={yearBets} watches={yearAbandoned} />}
@@ -811,7 +812,7 @@ function MonthListView({
                 <span className="flex items-center gap-1"><span className="w-2 h-px" style={{ background: "#f5c842" }} />累计</span>
               </div>
             </div>
-            <PnlBars data={dailyBarsForMonth(monthBets, year, month)} height={140} zoomable />
+            <PnlBars data={dailyBarsForMonth(monthBets, year, month)} height={140} zoomable compactEmpty />
           </div>
         )}
         <AnalyticsPanel bets={monthBets} watches={monthWatches} />
@@ -1121,49 +1122,71 @@ function RecordsInner() {
     setAllAbandonedRecords(getAbandonedRecords());
   }, [betId, abanId]);
 
+  // B6: 删除确认 toast（从详情页 sessionStorage "bda_flash" 取）
+  const { show: showToast, node: toastNode } = useToast();
+  useEffect(() => {
+    try {
+      const msg = sessionStorage.getItem("bda_flash");
+      if (msg) {
+        sessionStorage.removeItem("bda_flash");
+        showToast(msg, "success");
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [betId, abanId]);
+
   if (betId) return <RecordDetail id={betId} />;
   if (abanId) return <AbandonedDetail id={abanId} />;
   if (!viewLoaded) return <div className="min-h-screen bg-background" />;
 
   if (viewMode === "week") {
     return (
-      <WeekView
-        weekAnchor={weekAnchor}
-        setWeekAnchor={setWeekAnchor}
-        viewMode={viewMode}
-        setViewMode={setViewMode}
-        allBetRecords={allBetRecords}
-        allAbandonedRecords={allAbandonedRecords}
-        highlightDate={dateParam ?? undefined}
-      />
+      <>
+        {toastNode}
+        <WeekView
+          weekAnchor={weekAnchor}
+          setWeekAnchor={setWeekAnchor}
+          viewMode={viewMode}
+          setViewMode={setViewMode}
+          allBetRecords={allBetRecords}
+          allAbandonedRecords={allAbandonedRecords}
+          highlightDate={dateParam ?? undefined}
+        />
+      </>
     );
   }
 
   if (viewMode === "year") {
     return (
-      <YearView
-        year={year}
-        setYear={setYear}
-        viewMode={viewMode}
-        setViewMode={setViewMode}
-        allBetRecords={allBetRecords}
-        allAbandonedRecords={allAbandonedRecords}
-        onMonthClick={(m) => { setMonth(m); setViewMode("month"); }}
-      />
+      <>
+        {toastNode}
+        <YearView
+          year={year}
+          setYear={setYear}
+          viewMode={viewMode}
+          setViewMode={setViewMode}
+          allBetRecords={allBetRecords}
+          allAbandonedRecords={allAbandonedRecords}
+          onMonthClick={(m) => { setMonth(m); setViewMode("month"); }}
+        />
+      </>
     );
   }
 
   return (
-    <MonthListView
-      year={year}
-      month={month}
-      setYear={setYear}
-      setMonth={setMonth}
-      viewMode={viewMode}
-      setViewMode={setViewMode}
-      allBetRecords={allBetRecords}
-      allAbandonedRecords={allAbandonedRecords}
-    />
+    <>
+      {toastNode}
+      <MonthListView
+        year={year}
+        month={month}
+        setYear={setYear}
+        setMonth={setMonth}
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+        allBetRecords={allBetRecords}
+        allAbandonedRecords={allAbandonedRecords}
+      />
+    </>
   );
 }
 

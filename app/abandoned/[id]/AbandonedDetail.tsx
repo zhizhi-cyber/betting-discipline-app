@@ -5,8 +5,8 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronUp, Trash2, Star, Pencil } from "lucide-react";
 import type { ReviewConclusion, AbandonedRecord, AnalysisVerdict, ScoreData, BetRecord, SidedHandicap } from "@/lib/types";
-import { SUBDIMS, formatBetPreview, formatSidedHandicap, parseKickoff } from "@/lib/types";
-import { getAbandonedRecords, saveAbandonedRecord, deleteAbandonedRecord, promoteWatchToBet, getSettings, countToday } from "@/lib/storage";
+import { SUBDIMS, formatBetPreview, formatSidedHandicap, parseKickoff, gradeFromScore, isHardStopped, isSemiHardStopped } from "@/lib/types";
+import { getAbandonedRecords, saveAbandonedRecord, deleteAbandonedRecord, promoteWatchToBet, getSettings, countToday, calcLockState, formatLockMessage } from "@/lib/storage";
 import { parseAmount, parseOddsInput } from "@/lib/format";
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
@@ -119,6 +119,12 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
 
   const handlePromote = () => {
     if (!record) return;
+    // 第二套锁：日限触发后禁止补录为下注（封掉「转观察→立刻补录」的后门）
+    const lockNow = calcLockState(new Date(), settings);
+    if (lockNow.locked) {
+      showToast(formatLockMessage(lockNow), "error");
+      return;
+    }
     const amt = parseAmount(promoteAmount);
     if (!amt.ok) { showToast(amt.error || "金额无效", "error"); return; }
     const oddsRes = parseOddsInput(promoteOdds);
@@ -126,6 +132,10 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
     const amount = amt.value;
     const odds = oddsRes.value;
     const newBetId = `b-${Date.now()}`;
+    // 按原评分重算等级（原来硬编码 C 的 bug）
+    const hard = isHardStopped(record.scores);
+    const semiHard = isSemiHardStopped(record.scores);
+    const recomputedGrade = gradeFromScore(record.totalScore, hard, false, semiHard);
     const newBet: BetRecord = {
       id: newBetId,
       type: "bet",
@@ -136,7 +146,7 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
       bettingDirection: record.bettingDirection,
       handicapSide: record.handicapSide,
       handicapValue: record.handicapValue,
-      grade: "C",
+      grade: recomputedGrade,
       totalScore: record.totalScore,
       scores: record.scores,
       deduction: record.deduction,
@@ -197,7 +207,11 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
           <div className="w-full bg-card border-t border-border px-4 py-5 space-y-3 max-w-[430px] mx-auto">
             <p className="text-sm font-bold">确认删除这条记录？</p>
             <p className="text-xs text-muted-foreground">删除后无法恢复</p>
-            <button onClick={() => { deleteAbandonedRecord(record.id); router.push("/records"); }}
+            <button onClick={() => {
+                deleteAbandonedRecord(record.id);
+                try { sessionStorage.setItem("bda_flash", "观察记录已删除"); } catch {}
+                router.push("/records");
+              }}
               className="w-full py-3 rounded font-bold text-sm bg-loss text-white">
               确认删除
             </button>
@@ -229,10 +243,18 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
             {overBetLimit && (
               <p className="text-[11px] text-loss">⚠ 今日下注已达上限 {today.bets}/{settings.riskControls.maxDailyMatches}，仍要补录？</p>
             )}
+            {(() => {
+              const lockNow = calcLockState(new Date(), settings);
+              if (!lockNow.locked) return null;
+              return <p className="text-[11px] text-loss font-semibold">⚠ {formatLockMessage(lockNow)}，补录已被封锁</p>;
+            })()}
             <p className="text-[10px] text-muted-foreground">补录为下注会标记为&ldquo;违纪单&rdquo;，提醒你这次绕过了观察纪律。</p>
-            <button onClick={handlePromote}
-              className="w-full py-3 rounded font-bold text-sm bg-foreground text-background">
-              确认补录为下注
+            <button
+              onClick={handlePromote}
+              disabled={calcLockState(new Date(), settings).locked}
+              className="w-full py-3 rounded font-bold text-sm bg-loss text-white disabled:bg-muted disabled:text-muted-foreground/50"
+            >
+              确认补录为下注（违纪单）
             </button>
             <button onClick={() => setPromoteOpen(false)}
               className="w-full py-2 text-xs text-muted-foreground">取消</button>

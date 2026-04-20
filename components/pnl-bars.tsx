@@ -25,6 +25,8 @@ interface Props {
   zoomable?: boolean;
   /** Bar granularity affects X-axis labeling. Auto-detected by key distance. */
   granularity?: Granularity;
+  /** 过滤掉无活动的日/周格，仅保留有盈亏的 bar（用于月/年视图压缩空白）。 */
+  compactEmpty?: boolean;
   className?: string;
 }
 
@@ -61,13 +63,19 @@ function parseKey(k: string): Date {
 }
 
 export default function PnlBars({
-  data,
+  data: rawData,
   height = 140,
   showCumulative = true,
   zoomable = false,
   granularity,
+  compactEmpty = false,
   className = "",
 }: Props) {
+  // compactEmpty：过滤零值 bar；保留首尾锚点以让累计线贴合总盈亏
+  const data = useMemo(() => {
+    if (!compactEmpty) return rawData;
+    return rawData.filter((d) => d.pnl !== 0);
+  }, [rawData, compactEmpty]);
   const [zoom, setZoom] = useState(1);
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   const [cumVisible, setCumVisible] = useState(showCumulative);

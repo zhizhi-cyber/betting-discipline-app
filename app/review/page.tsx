@@ -7,7 +7,7 @@ import BottomNav from "@/components/bottom-nav";
 import {
   saveBetRecord, saveAbandonedRecord, getSettings, countToday,
   getBetRecords, getAbandonedRecords, dailyBetLimitFor, calcLockState, promoteWatchToBet,
-  formatLockMessage,
+  formatLockMessage, detectBehavioralViolations,
   type LockState,
 } from "@/lib/storage";
 import { parseAmount, parseOddsInput } from "@/lib/format";
@@ -310,14 +310,24 @@ function ReviewInner() {
   }, [betTeamName, handicapSide, handicapValue, bettingDirection, odds]);
 
   // Auto-generate watch reason (hard-gate returns chip list, not string)
+  // 新规则（双红旗）：硬停 = 可靠性 AND 陷阱 都为 0
   const hardFailChips = useMemo(() => {
     if (!hardStopped) return [] as string[];
+    const fail: string[] = [];
+    if (scores.reliability.score === 0) fail.push("可靠性");
+    if (scores.trap.score === 0) fail.push("诱盘/抽水");
+    return fail;
+  }, [hardStopped, scores]);
+
+  // 半硬门槛触发原因（单项红旗）
+  const semiHardChips = useMemo(() => {
+    if (!semiHardStopped) return [] as string[];
     const fail: string[] = [];
     if (scores.bookie.score === 0) fail.push("庄家立场");
     if (scores.reliability.score === 0) fail.push("可靠性");
     if (scores.trap.score === 0) fail.push("诱盘/抽水");
     return fail;
-  }, [hardStopped, scores]);
+  }, [semiHardStopped, scores]);
 
   const autoWatchReason = useMemo(() => {
     if (hardStopped) return `硬门槛未过：${hardFailChips.join("、")}`;
@@ -333,13 +343,19 @@ function ReviewInner() {
   const setSubdim = (catKey: keyof ScoreData, subKey: string, choice: SubdimChoice) => {
     setScores((p) => {
       const nextSubdims = { ...p[catKey].subdims, [subKey]: choice };
-      // 子维度变化 → 重新 clamp 当前 score（防止答案变差但旧总分还留着高值）
-      const cap = scoreCapFromSubdims(catKey, nextSubdims);
+      const newCap = scoreCapFromSubdims(catKey, nextSubdims);
+      const oldCap = scoreCapFromSubdims(catKey, p[catKey].subdims);
       const curScore = p[catKey].score;
-      const clamped = (curScore > cap ? cap : curScore) as 0 | 1 | 2;
+      // 向下：超出新上限的 clamp 下来
+      // 向上：如果用户之前正好"踩在旧上限"，说明他是在吃满答案推的分，
+      //      那答案变好后帮他把分同步拉到新上限（符合直觉：选 A 就该自动给 2 分）
+      let nextScore: 0 | 1 | 2;
+      if (curScore > newCap) nextScore = newCap as 0 | 1 | 2;
+      else if (curScore === oldCap && newCap > oldCap) nextScore = newCap as 0 | 1 | 2;
+      else nextScore = curScore;
       return {
         ...p,
-        [catKey]: { ...p[catKey], subdims: nextSubdims, score: clamped },
+        [catKey]: { ...p[catKey], subdims: nextSubdims, score: nextScore },
       };
     });
   };
@@ -391,6 +407,16 @@ function ReviewInner() {
     } else {
       setOddsError("");
     }
+    // A4 升降盘字段校验：不填可以，填了要求开盘/临盘双侧都完整，避免半填脏数据
+    const lineFields = [openHandicap, openOdds, closeHandicap, closeOdds].map((v) => (v || "").trim());
+    const hasAny = lineFields.some((v) => v !== "");
+    if (hasAny) {
+      const hasAll = lineFields.every((v) => v !== "");
+      if (!hasAll) {
+        showToast("升降盘：开盘/临盘的盘口+水位要么都填，要么都空", "error");
+        ok = false;
+      }
+    }
     if (!ok) {
       showToast("请先修正红字部分", "error");
     }
@@ -415,6 +441,12 @@ function ReviewInner() {
 
   const handlePromoteFromEdit = () => {
     if (!editOriginalWatch) return;
+    // 第二套锁：日/月亏损触发锁定后禁止补录（封死「观察→补录」后门）
+    const lockNow = calcLockState(new Date(), settings);
+    if (lockNow.locked) {
+      showToast(formatLockMessage(lockNow) + "，补录已被封锁", "error");
+      return;
+    }
     const orig = editOriginalWatch;
     const id = `b-${Date.now()}`;
     const amt = parseAmount(confirmAmount);
@@ -466,11 +498,19 @@ function ReviewInner() {
     const oddsParsed = parseOddsInput(odds);
     if (!oddsParsed.ok) { setOddsError(oddsParsed.error || "水位无效"); setConfirmOpen(false); return; }
     if (!kickoffTime) { setKickoffError("请填写开赛时间"); setConfirmOpen(false); return; }
-    // Over-suggested => violation
-    const isViolation = amount > suggestedAmount;
-    const violationReason = isViolation
-      ? `超建议金额（建议 ¥${suggestedAmount}，实投 ¥${amount}）`
-      : undefined;
+    // 违纪合并：超建议金额 + 行为违纪（连败追损 / 临开赛冲动 / 同场重复）
+    const reasons: string[] = [];
+    if (amount > suggestedAmount) {
+      reasons.push(`超建议金额（建议 ¥${suggestedAmount}，实投 ¥${amount}）`);
+    }
+    reasons.push(...detectBehavioralViolations({
+      amount,
+      kickoffISO: normalizeKickoff(kickoffTime),
+      homeTeam: homeTeam || "主队",
+      awayTeam: awayTeam || "客队",
+    }));
+    const isViolation = reasons.length > 0;
+    const violationReason = reasons.length > 0 ? reasons.join(" + ") : undefined;
     saveBetRecord({
       id,
       type: "bet",
@@ -505,6 +545,11 @@ function ReviewInner() {
       createdAt: new Date().toISOString(),
     });
     setTodayCount(countToday());
+    // 保存后重算封锁状态，如果本单刚把用户推到上限，跳转后至少首页 banner 是对的
+    const lockAfter = calcLockState(new Date(), settings);
+    if (lockAfter.locked) {
+      showToast("⚠ 已触发封锁：" + formatLockMessage(lockAfter), "error");
+    }
     resetAll();
     router.push("/records");
   };
@@ -597,6 +642,13 @@ function ReviewInner() {
         : undefined,
       // Preserve: id, completionStatus, createdAt, result, convertedFromWatchId
     });
+    // 编辑已结算单的金额会反算 PnL → 可能刚好触发/解除封锁。给个即时反馈。
+    if (orig.result) {
+      const lockAfter = calcLockState(new Date(), settings);
+      if (lockAfter.locked) {
+        showToast("⚠ 编辑后触发封锁：" + formatLockMessage(lockAfter), "error");
+      }
+    }
     router.push(`/records?id=${orig.id}`);
   };
 
@@ -783,10 +835,14 @@ function ReviewInner() {
           <div>
             <button
               onClick={() => setShowLineMove((v) => !v)}
-              className="flex items-center gap-1 text-[11px] text-muted-foreground"
+              className={`flex items-center gap-1.5 text-[11px] px-2.5 py-1.5 rounded-md border transition-colors ${
+                showLineMove
+                  ? "border-foreground/30 bg-muted text-foreground"
+                  : "border-dashed border-border text-muted-foreground hover:text-foreground"
+              }`}
             >
               <span className={`transition-transform ${showLineMove ? "rotate-90" : ""}`}>▸</span>
-              变盘记录（选填，复盘专业度 +）
+              {showLineMove ? "收起变盘记录" : "+ 记录变盘（初盘 → 临开赛盘，选填）"}
             </button>
             {showLineMove && (
               <div className="mt-2 space-y-2 border border-border rounded-md p-2.5 bg-muted/30">
@@ -1163,7 +1219,14 @@ function ReviewInner() {
             <p className="text-[11px] text-loss">⚠ 硬门槛未过，强制转入观察</p>
           )}
           {!hardStopped && semiHardStopped && !isEditing && (
-            <p className="text-[11px] text-warning">⚠ 半硬门槛：庄家立场暧昧，已自动降级一档、建议金额砍半</p>
+            <p className="text-[11px] text-warning">⚠ 半硬门槛（{semiHardChips.join("、")}）：自动降级一档 + 建议金额砍半</p>
+          )}
+          {/* B7 编辑模式下硬门槛解除的显式提醒 —— 防止通过编辑绕过硬门槛 */}
+          {isEditingBet && editOriginalBet && !hardStopped && isHardStopped(editOriginalBet.scores) && (
+            <div className="rounded border border-warning/40 bg-warning/10 px-3 py-2">
+              <p className="text-[11px] text-warning font-semibold">⚠ 此单原本是硬门槛观察单</p>
+              <p className="text-[10px] text-warning/80 mt-0.5">改动后已允许下注，请确认评分调整是基于新信息、而非事后合理化。</p>
+            </div>
           )}
 
           {/* Edit-mode inline watch reason */}
@@ -1314,6 +1377,14 @@ function ReviewInner() {
                 <p className="text-[11px] text-loss font-semibold">
                   ⚠ {formatLockMessage(lockState)}
                 </p>
+              )}
+              {isEditingBet && amountChanged && !hadResult && (
+                <div className="rounded border border-warning/30 bg-warning/10 px-3 py-2">
+                  <p className="text-[10px] text-warning font-mono">
+                    金额变更：¥{origAmount.toLocaleString()} → ¥{parsedAmount.toLocaleString()}
+                    {parsedAmount > origAmount && <span className="ml-2 font-bold">（加仓 +¥{(parsedAmount - origAmount).toLocaleString()}）</span>}
+                  </p>
+                </div>
               )}
               {isEditingBet && amountChanged && hadResult && (
                 <div className="rounded border border-loss/40 bg-loss/10 px-3 py-2">

@@ -67,7 +67,7 @@ export const SUBDIMS: Record<string, SubdimConfig[]> = {
 export const SUBDIM_QUALITY: Record<string, Record<string, { A: 0|1|2; B: 0|1|2; C: 0|1|2 }>> = {
   reliability: {
     info:        { A: 2, B: 0, C: 1 },  // 信息：充分=好
-    clarity:     { A: 2, B: 0, C: 1 },  // 思路：清楚=好
+    clarity:     { A: 2, B: 1, C: 1 },  // 思路：清楚=好，模糊≠差（老手也在模糊局里找价值，只需谨慎不是淘汰）
     margin:      { A: 2, B: 0, C: 1 },  // 安全边界：足够=好
     impulse:     { A: 0, B: 2, C: 1 },  // 冲动：是=差（反向）
     shouldWatch: { A: 0, B: 2, C: 1 },  // 应转观察：是=差（反向）
@@ -333,19 +333,25 @@ export function shouldRouteToWatch(totalScore: number, hardStopped: boolean): bo
 
 /**
  * 硬门槛：强制转入观察、不允许下注。
- * 仅当"可靠性 = 0"（信息不足/思路模糊）或"陷阱嫌疑 = 0"（疑似诱盘）时触发。
- * 注：庄家立场 = 0（暧昧）不再硬停 —— 亚盘里暧昧局是常态，应走"半硬门槛"降级一档处理。
+ * 粒度细化：要"双红旗"——可靠性 = 0 且 陷阱嫌疑 = 0 同时出现（信息差 + 疑似诱盘）
+ * 才视为高风险局面强制叫停。
+ * 单项红旗（只有可靠性=0 或 只有陷阱=0）走半硬门槛——降一档 + 金额砍半，但允许下。
+ * （原规则"任一=0 即硬停"过于绝对，放大了离谱被观察的比例，反而让用户懈怠评分。）
  */
 export function isHardStopped(scores: ScoreData): boolean {
-  return scores.reliability.score === 0 || scores.trap.score === 0;
+  return scores.reliability.score === 0 && scores.trap.score === 0;
 }
 
 /**
- * 半硬门槛：庄家立场为 0（暧昧），不禁下但建议降级一档（且建议金额砍半）。
- * 返回 true 表示触发降级。由 gradeFromScore / suggestedAmount 共同响应。
+ * 半硬门槛：单个关键项为 0（可靠性、陷阱、庄家立场任一），不禁下但建议降级一档
+ * + 建议金额砍半。由 gradeFromScore / suggestedAmount 共同响应。
+ * 硬门槛优先——双红旗已触发硬停时不再报半硬。
  */
 export function isSemiHardStopped(scores: ScoreData): boolean {
-  return scores.bookie.score === 0;
+  if (isHardStopped(scores)) return false;
+  return scores.bookie.score === 0
+      || scores.reliability.score === 0
+      || scores.trap.score === 0;
 }
 
 export function suggestedAmount(grade: Grade, amounts: GradeAmounts, semiHardStopped?: boolean): number {

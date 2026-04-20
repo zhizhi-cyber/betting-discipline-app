@@ -34,6 +34,7 @@ export default function AnalyticsPanel({
           label="盘面胜率"
           value={a.settledCount > 0 ? `${a.winRate.toFixed(0)}%` : "—"}
           accent={a.settledCount > 0 ? (a.winRate >= 50 ? "profit" : "loss") : "muted"}
+          footnote="赢半计 0.5 · 走盘剔除"
         />
         <OverviewTile
           icon={<Target size={11} strokeWidth={2} />}
@@ -159,12 +160,13 @@ export default function AnalyticsPanel({
 }
 
 function OverviewTile({
-  icon, label, value, accent,
+  icon, label, value, accent, footnote,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
   accent: "profit" | "loss" | "warning" | "muted";
+  footnote?: string;
 }) {
   const valueCls = accent === "profit" ? "text-profit"
     : accent === "loss" ? "text-loss"
@@ -177,6 +179,7 @@ function OverviewTile({
         <span>{label}</span>
       </div>
       <p className={`text-sm font-black font-mono tabular-nums mt-0.5 ${valueCls}`}>{value}</p>
+      {footnote && <p className="text-[8px] text-muted-foreground/50 mt-0.5 leading-tight">{footnote}</p>}
     </div>
   );
 }

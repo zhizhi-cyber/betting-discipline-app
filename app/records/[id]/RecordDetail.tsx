@@ -155,8 +155,15 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
           <div className="w-full bg-card border-t border-border px-4 py-5 space-y-3 max-w-[430px] mx-auto">
             <p className="text-sm font-bold">确认删除这条记录？</p>
             <p className="text-xs text-muted-foreground">删除后无法恢复</p>
-            <button onClick={() => { deleteBetRecord(record.id); router.push("/records"); }}
-              className="w-full py-3 rounded font-bold text-sm bg-loss text-white">
+            <button
+              onClick={() => {
+                deleteBetRecord(record.id);
+                // 通过 sessionStorage 让下一个页面的 records 列表能弹 toast
+                try { sessionStorage.setItem("bda_flash", "下注记录已删除"); } catch {}
+                router.push("/records");
+              }}
+              className="w-full py-3 rounded font-bold text-sm bg-loss text-white"
+            >
               确认删除
             </button>
             <button onClick={() => setDeleteConfirm(false)} className="w-full py-2 text-xs text-muted-foreground">

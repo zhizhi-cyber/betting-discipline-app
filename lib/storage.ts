@@ -354,11 +354,13 @@ export function calcLockState(now: Date = new Date(), settings?: AppSettings): L
   if (rc.dailyLossLimit > 0 && dailyPnl <= -rc.dailyLossLimit) {
     state.locked = true;
     state.reason = "daily_loss";
-    // Unlock at next match-day start (tomorrow 10:00)
+    // 触发日限额 → 强制休息一整天：锁到后天 10:00（跳过当日剩余场次 + 完整一天）
     const anchor = matchDayStart(now);
-    anchor.setDate(anchor.getDate() + 1);
+    anchor.setDate(anchor.getDate() + 2);
     state.unlockAt = anchor.toISOString();
-    state.unlockLabel = "明日 10:00";
+    const mm = anchor.getMonth() + 1;
+    const dd = anchor.getDate();
+    state.unlockLabel = `${mm}月${dd}日 10:00`;
     return state;
   }
 
@@ -375,7 +377,82 @@ export function formatLockMessage(lock: LockState): string {
   if (lock.reason === "monthly_drawdown") {
     return `月度亏损达上限，${when} 前暂停下注`;
   }
-  return `今日亏损达上限，${when} 前仅限观察`;
+  // daily_loss 现在强制休息一整天（锁到后天 10:00）
+  return `今日亏损达上限，强制休息至 ${when}（期间不得下注与补录）`;
+}
+
+// ─── 行为违纪探测（C5）────────────────────────────────────────────────────
+/**
+ * 除了"超建议金额"和"观察转下注"之外的行为型违纪：
+ *  - 连败追损：近 2 场已结算单都输（含输半）且本次下注额大于它们的最大值
+ *  - 临开赛冲动：距开赛 < 10 分钟
+ *  - 同场重复：同一 match-day 内对同对阵已经下过单
+ * 仅返回原因数组；调用方与既有的 "超建议金额 / 观察转下注" 合并成最终 violation 描述。
+ */
+export function detectBehavioralViolations(params: {
+  amount: number;
+  kickoffISO: string;
+  homeTeam: string;
+  awayTeam: string;
+  now?: Date;
+  existingBets?: BetRecord[];
+}): string[] {
+  const now = params.now ?? new Date();
+  const bets = params.existingBets ?? getBetRecords();
+  const reasons: string[] = [];
+
+  // 1) 连败追损：按下注时间倒序取最近 2 条已结算，都负且本次金额更大
+  const settled = bets
+    .filter((b) => b.result && (b.result.outcome === "loss" || b.result.outcome === "half_loss"))
+    .slice()
+    .sort((a, b) => {
+      const ta = new Date(a.bets[0]?.betTime || a.createdAt).getTime();
+      const tb = new Date(b.bets[0]?.betTime || b.createdAt).getTime();
+      return tb - ta;
+    });
+  // 还要保证这两条是连续的（中间没有赢过）
+  const lastTwoSettled = bets
+    .filter((b) => b.result)
+    .slice()
+    .sort((a, b) => {
+      const ta = new Date(a.bets[0]?.betTime || a.createdAt).getTime();
+      const tb = new Date(b.bets[0]?.betTime || b.createdAt).getTime();
+      return tb - ta;
+    })
+    .slice(0, 2);
+  const bothLoss = lastTwoSettled.length === 2 && lastTwoSettled.every(
+    (b) => b.result!.outcome === "loss" || b.result!.outcome === "half_loss"
+  );
+  if (bothLoss) {
+    const prevMax = Math.max(
+      ...lastTwoSettled.map((b) => b.bets.reduce((s, x) => s + x.amount, 0))
+    );
+    if (params.amount > prevMax) {
+      reasons.push(`连败追损（前 2 场都输，本次 ¥${params.amount.toLocaleString()} > 前两场最大 ¥${prevMax.toLocaleString()}）`);
+    }
+    void settled; // silence unused
+  }
+
+  // 2) 临开赛冲动：< 10 分钟
+  const kickoff = new Date(params.kickoffISO).getTime();
+  const diffMin = (kickoff - now.getTime()) / 60000;
+  if (diffMin >= 0 && diffMin < 10) {
+    reasons.push(`临开赛冲动（距开赛 ${Math.round(diffMin)} 分钟）`);
+  }
+
+  // 3) 同场重复：同 match-day + 同对阵已有单
+  const newDay = matchDayKey(params.kickoffISO);
+  const dup = bets.find(
+    (b) =>
+      matchDayKey(b.kickoffTime) === newDay &&
+      ((b.homeTeam === params.homeTeam && b.awayTeam === params.awayTeam) ||
+       (b.homeTeam === params.awayTeam && b.awayTeam === params.homeTeam))
+  );
+  if (dup) {
+    reasons.push("同场重复下注（同一对阵已经下过）");
+  }
+
+  return reasons;
 }
 
 // ─── Grade win-rate breakdown ─────────────────────────────────────────────────

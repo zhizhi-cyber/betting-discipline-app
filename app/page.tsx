@@ -119,6 +119,35 @@ export default function HomePage() {
     setMounted(true);
   }, []);
 
+  // A5 跨 tab 同步：监听 localStorage 变更 + 标签页切回前台时刷新，防止另一 tab
+  // 保存/编辑后本 tab 看到的是旧数据（lockState / todayCount 漂移）
+  useEffect(() => {
+    const refresh = () => {
+      const s = getSettings();
+      setTodayCount(countToday());
+      setAllBets(getBetRecords());
+      setAllAbandoned(getAbandonedRecords());
+      setLockState(calcLockState(new Date(), s));
+      setDailyLimits({
+        bets: dailyBetLimitFor(new Date(), s),
+        watches: s.riskControls.maxDailyWatches,
+      });
+    };
+    const onStorage = (e: StorageEvent) => {
+      // 只关心我们自己写的 key（前缀 "bda_"），其他域/应用的写入忽略
+      if (!e.key || e.key.startsWith("bda_")) refresh();
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    window.addEventListener("storage", onStorage);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, []);
+
   // Recompute stats / target / label when range changes
   useEffect(() => {
     if (!mounted) return;
@@ -252,10 +281,10 @@ export default function HomePage() {
               {formatLockMessage(lockState)}
             </p>
           </div>
-          <p className="text-[10px] text-loss/70 mt-0.5 ml-4">
+          <p className="text-[10px] text-loss/70 mt-0.5 ml-4 font-mono tabular-nums">
             {lockState.reason === "monthly_drawdown"
-              ? `当月累计 ${lockState.monthlyPnl.toLocaleString()} / 上限 -¥${lockState.monthlyMaxDrawdown.toLocaleString()}`
-              : `今日累计 ${lockState.dailyPnl.toLocaleString()} / 上限 -¥${lockState.dailyLossLimit.toLocaleString()}`}
+              ? `当月累计 \u2212¥${Math.abs(lockState.monthlyPnl).toLocaleString()} / 上限 \u2212¥${lockState.monthlyMaxDrawdown.toLocaleString()}`
+              : `今日累计 \u2212¥${Math.abs(lockState.dailyPnl).toLocaleString()} / 上限 \u2212¥${lockState.dailyLossLimit.toLocaleString()}`}
           </p>
         </div>
       )}
