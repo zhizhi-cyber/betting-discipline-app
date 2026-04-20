@@ -7,7 +7,8 @@ import BottomNav from "@/components/bottom-nav";
 import {
   saveBetRecord, saveAbandonedRecord, getSettings, countToday,
   getBetRecords, getAbandonedRecords, dailyBetLimitFor, calcLockState, promoteWatchToBet,
-  formatLockMessage, detectBehavioralViolations,
+  formatLockMessage, detectBehavioralViolations, detectSoftWarnings,
+  getScreeningPool, saveScreeningItem,
   type LockState,
 } from "@/lib/storage";
 import { parseAmount, parseOddsInput } from "@/lib/format";
@@ -41,6 +42,7 @@ import {
   formatSidedHandicap,
   normalizeKickoff,
   toDateTimeLocalValue,
+  detectReverseWaterSuspicion,
 } from "@/lib/types";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -158,6 +160,7 @@ function ReviewInner() {
   const searchParams = useSearchParams();
   const editBetId   = searchParams.get("edit");
   const editWatchId = searchParams.get("editWatch");
+  const screeningId = searchParams.get("screening");
   const isEditingBet   = !!editBetId;
   const isEditingWatch = !!editWatchId;
   const isEditing      = isEditingBet || isEditingWatch;
@@ -267,6 +270,43 @@ function ReviewInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editBetId, editWatchId]);
 
+  // 从"今日扫盘"深挖：读 ?screening=id，预填比赛信息 + 3 个子维度
+  useEffect(() => {
+    if (!screeningId || isEditing) return;
+    const item = getScreeningPool().find((x) => x.id === screeningId);
+    if (!item) return;
+    if (item.matchName) setMatchName(item.matchName);
+    if (item.homeTeam) setHomeTeam(item.homeTeam);
+    if (item.awayTeam) setAwayTeam(item.awayTeam);
+    if (item.kickoffTime) setKickoffTime(toDateTimeLocalValue(item.kickoffTime));
+    // 三问 → 3 个子维度（同语义：A=好 / B=差 / C=中性）
+    setScores((p) => {
+      const next = { ...p };
+      next.reliability = {
+        ...p.reliability,
+        subdims: { ...p.reliability.subdims, clarity: item.reliability },
+      };
+      next.trap = {
+        ...p.trap,
+        subdims: { ...p.trap.subdims, trap: item.trap },
+      };
+      next.bookie = {
+        ...p.bookie,
+        subdims: { ...p.bookie.subdims, confidence: item.bookie },
+      };
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screeningId]);
+
+  // 辅助：把扫盘条目标记为已深挖（保存下注/观察后调用）
+  const markScreeningPromoted = (betOrWatchId: string) => {
+    if (!screeningId) return;
+    const item = getScreeningPool().find((x) => x.id === screeningId);
+    if (!item) return;
+    saveScreeningItem({ ...item, promotedToBetId: betOrWatchId });
+  };
+
   // ─── Derived ──────────────────────────────────────────────────────────────
 
   const totalScore = useMemo(() => {
@@ -318,6 +358,12 @@ function ReviewInner() {
     if (scores.trap.score === 0) fail.push("诱盘/抽水");
     return fail;
   }, [hardStopped, scores]);
+
+  // 倒赔嫌疑：基本面强弱 vs 庄家方向对不上
+  const reverseWaterWarning = useMemo(
+    () => detectReverseWaterSuspicion(scores),
+    [scores]
+  );
 
   // 半硬门槛触发原因（单项红旗）
   const semiHardChips = useMemo(() => {
@@ -544,6 +590,7 @@ function ReviewInner() {
       completionStatus: "pristine",
       createdAt: new Date().toISOString(),
     });
+    markScreeningPromoted(id);
     setTodayCount(countToday());
     // 保存后重算封锁状态，如果本单刚把用户推到上限，跳转后至少首页 banner 是对的
     const lockAfter = calcLockState(new Date(), settings);
@@ -581,6 +628,7 @@ function ReviewInner() {
       completionStatus: "pristine",
       createdAt: new Date().toISOString(),
     });
+    markScreeningPromoted(id);
     setTodayCount(countToday());
     resetAll();
     router.push("/records");
@@ -1237,6 +1285,12 @@ function ReviewInner() {
           {!hardStopped && semiHardStopped && !isEditing && (
             <p className="text-[11px] text-warning">⚠ 半硬门槛（{semiHardChips.join("、")}）：自动降级一档 + 建议金额砍半</p>
           )}
+          {reverseWaterWarning && (
+            <div className="rounded border border-loss/40 bg-loss/10 px-3 py-2">
+              <p className="text-[11px] text-loss font-semibold">⚠ 倒赔嫌疑</p>
+              <p className="text-[10px] text-loss/80 mt-0.5">{reverseWaterWarning}</p>
+            </div>
+          )}
           {/* B7 编辑模式下硬门槛解除的显式提醒 —— 防止通过编辑绕过硬门槛 */}
           {isEditingBet && editOriginalBet && !hardStopped && isHardStopped(editOriginalBet.scores) && (
             <div className="rounded border border-warning/40 bg-warning/10 px-3 py-2">
@@ -1353,6 +1407,13 @@ function ReviewInner() {
         const parsedAmount  = amtRes.ok ? amtRes.value : 0;
         const amountChanged = isEditingBet && amtRes.ok && parsedAmount !== origAmount;
         const hadResult     = !!editOriginalBet?.result;
+        const softWarnings  = amtRes.ok
+          ? detectSoftWarnings({
+              amount: parsedAmount,
+              settings,
+              excludeId: isEditingBet ? editOriginalBet?.id : undefined,
+            })
+          : [];
         return (
           <div className="fixed inset-0 z-50 bg-background/80 flex items-end">
             <div className="w-full bg-card border-t border-border px-4 py-5 space-y-3 max-w-[430px] mx-auto max-h-[85vh] overflow-y-auto">
@@ -1409,6 +1470,14 @@ function ReviewInner() {
                     原金额 ¥{origAmount.toLocaleString()} → 新金额 ¥{parsedAmount.toLocaleString()}，
                     月/年 ROI 与盈亏曲线会回溯更新。
                   </p>
+                </div>
+              )}
+              {softWarnings.length > 0 && (
+                <div className="rounded border border-warning/30 bg-warning/10 px-3 py-2 space-y-1">
+                  <p className="text-[10px] text-warning font-bold">⚠ 软提示（不阻止下注）</p>
+                  {softWarnings.map((w, i) => (
+                    <p key={i} className="text-[10px] text-warning/90 leading-snug">· {w}</p>
+                  ))}
                 </div>
               )}
               {isEditingBet && amountChanged && hadResult && !editAmountWarningShown ? (

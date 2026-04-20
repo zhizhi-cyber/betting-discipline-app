@@ -1,6 +1,7 @@
 "use client";
 
-import { Target, Trophy, Shield, Flame, Eye, AlertCircle, Sparkles } from "lucide-react";
+import { useState } from "react";
+import { Target, Trophy, Shield, Flame, Eye, AlertCircle, Sparkles, Clock, Moon, X } from "lucide-react";
 import type { BetRecord, AbandonedRecord } from "@/lib/types";
 import { calcRecordsAnalytics, calcGradeWinRates } from "@/lib/storage";
 
@@ -19,11 +20,28 @@ export default function AnalyticsPanel({
   bets: BetRecord[];
   watches: AbandonedRecord[];
 }) {
+  const [disciplineOpen, setDisciplineOpen] = useState(false);
   if (bets.length === 0 && watches.length === 0) return null;
 
   const a = calcRecordsAnalytics(bets, watches);
   const gradeRates = calcGradeWinRates(bets);
   const anyGradeSample = gradeRates.some((g) => g.sample > 0);
+
+  // 纪律违纪原因 roll-up
+  const violationBreakdown: { reason: string; count: number }[] = (() => {
+    const map = new Map<string, number>();
+    for (const r of bets) {
+      if (!r.isDisciplineViolation || !r.violationReason) continue;
+      // violationReason 是 "a + b" 这种拼接，拆成独立项
+      for (const raw of r.violationReason.split(" + ")) {
+        const key = raw.replace(/（.*?）/g, "").trim() || raw;
+        map.set(key, (map.get(key) ?? 0) + 1);
+      }
+    }
+    return Array.from(map.entries())
+      .map(([reason, count]) => ({ reason, count }))
+      .sort((a, b) => b.count - a.count);
+  })();
 
   return (
     <div className="space-y-3">
@@ -42,12 +60,20 @@ export default function AnalyticsPanel({
           value={a.effectiveBet > 0 ? `${a.roi >= 0 ? "+" : ""}${a.roi.toFixed(0)}%` : "—"}
           accent={a.effectiveBet > 0 ? (a.roi >= 0 ? "profit" : "loss") : "muted"}
         />
-        <OverviewTile
-          icon={<Shield size={11} strokeWidth={2} />}
-          label="纪律"
-          value={bets.length > 0 ? `${a.disciplineScore.toFixed(0)}%` : "—"}
-          accent={bets.length > 0 ? (a.disciplineScore >= 80 ? "profit" : "warning") : "muted"}
-        />
+        <button
+          type="button"
+          onClick={() => bets.length > 0 && setDisciplineOpen(true)}
+          className="text-left"
+          disabled={bets.length === 0}
+        >
+          <OverviewTile
+            icon={<Shield size={11} strokeWidth={2} />}
+            label="纪律"
+            value={bets.length > 0 ? `${a.disciplineScore.toFixed(0)}%` : "—"}
+            accent={bets.length > 0 ? (a.disciplineScore >= 80 ? "profit" : "warning") : "muted"}
+            footnote={bets.length > 0 ? "点击看详情 →" : undefined}
+          />
+        </button>
         <OverviewTile
           icon={<Flame size={11} strokeWidth={2} className={a.streak.type === "win" ? "" : a.streak.type === "loss" ? "opacity-60" : "opacity-30"} />}
           label={a.streak.type === "loss" ? "连亏" : "连胜"}
@@ -124,6 +150,104 @@ export default function AnalyticsPanel({
         </div>
       )}
 
+      {/* 行为类：平均赛前时长 + 深夜单 */}
+      {(a.avgLeadMinutes !== null || a.lateNight.count > 0) && (
+        <div className="grid grid-cols-2 gap-2">
+          {a.avgLeadMinutes !== null && (
+            <GlassCard title="平均赛前下单" icon={<Clock size={10} strokeWidth={2} />}>
+              <p className="text-sm font-black font-mono tabular-nums">
+                {formatLead(a.avgLeadMinutes)}
+              </p>
+              <p className="text-[9px] text-muted-foreground/60 mt-0.5">
+                {a.avgLeadMinutes < 30 ? "偏临开赛，警惕冲动" : a.avgLeadMinutes < 120 ? "节奏偏紧" : "准备较充分"}
+              </p>
+            </GlassCard>
+          )}
+          {a.lateNight.count > 0 && (
+            <GlassCard title="深夜单 (0-6点)" icon={<Moon size={10} strokeWidth={2} />}>
+              <div className="flex items-baseline gap-1.5">
+                <span className="text-sm font-black font-mono tabular-nums">{a.lateNight.count}</span>
+                <span className="text-[9px] text-muted-foreground">场</span>
+              </div>
+              {a.lateNight.settled > 0 && (
+                <p className="text-[9px] text-muted-foreground/70 mt-0.5 font-mono tabular-nums">
+                  胜{a.lateNight.winRate.toFixed(0)}% · ROI {a.lateNight.roi >= 0 ? "+" : ""}{a.lateNight.roi.toFixed(0)}%
+                </p>
+              )}
+            </GlassCard>
+          )}
+        </div>
+      )}
+
+      {/* 纪律分详情 drawer */}
+      {disciplineOpen && (
+        <div className="fixed inset-0 z-[55] flex items-end" onClick={() => setDisciplineOpen(false)}>
+          <div className="absolute inset-0 bg-black/60" />
+          <div
+            className="relative w-full max-w-[430px] mx-auto bg-background rounded-t-2xl border-t border-border px-4 py-5 space-y-3 max-h-[85dvh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-bold">纪律分详情</p>
+              <button onClick={() => setDisciplineOpen(false)} className="text-muted-foreground">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded bg-card/60 p-2 text-center">
+                <p className="text-[9px] text-muted-foreground">总单数</p>
+                <p className="text-sm font-black font-mono mt-0.5">{bets.length}</p>
+              </div>
+              <div className="rounded bg-card/60 p-2 text-center">
+                <p className="text-[9px] text-muted-foreground">违纪</p>
+                <p className="text-sm font-black font-mono mt-0.5 text-warning">{a.violationCount}</p>
+              </div>
+              <div className="rounded bg-card/60 p-2 text-center">
+                <p className="text-[9px] text-muted-foreground">合规</p>
+                <p className="text-sm font-black font-mono mt-0.5 text-profit">{bets.length - a.violationCount}</p>
+              </div>
+            </div>
+
+            <div className="rounded bg-card/60 px-3 py-2">
+              <div className="flex items-baseline justify-between">
+                <p className="text-[10px] text-muted-foreground">纪律分 = 合规 ÷ 总单数</p>
+                <p className={`text-lg font-black font-mono ${a.disciplineScore >= 80 ? "text-profit" : "text-warning"}`}>
+                  {a.disciplineScore.toFixed(0)}%
+                </p>
+              </div>
+              <div className="h-1.5 rounded-full bg-muted mt-1 overflow-hidden">
+                <div
+                  className={a.disciplineScore >= 80 ? "bg-profit h-full" : "bg-warning h-full"}
+                  style={{ width: `${a.disciplineScore}%` }}
+                />
+              </div>
+            </div>
+
+            {violationBreakdown.length > 0 ? (
+              <div>
+                <p className="text-[10px] font-bold text-muted-foreground mb-1.5">违纪原因分布</p>
+                <div className="space-y-1">
+                  {violationBreakdown.map((v) => (
+                    <div key={v.reason} className="flex items-center justify-between text-[11px] px-2 py-1.5 rounded bg-card/60">
+                      <span className="text-foreground/80 truncate pr-2">{v.reason}</span>
+                      <span className="font-mono tabular-nums text-warning font-semibold shrink-0">{v.count} 次</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="text-[11px] text-muted-foreground/70 text-center py-4">本区间无违纪记录</p>
+            )}
+
+            <div className="text-[10px] text-muted-foreground/60 leading-relaxed space-y-0.5 pt-1">
+              <p>· 违纪原因包括：超建议金额、临开赛冲动、连败追损、同场重复、观察转下注等</p>
+              <p>· 纪律分 ≥ 80% 视为良好；&lt; 80% 需要警惕</p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Watch conversion */}
       {(a.watchConversion.watchedThenAbandoned.count > 0 || a.watchConversion.watchedThenBet.count > 0) && (
         <GlassCard title="观察池转化" icon={<Eye size={10} strokeWidth={2} />}>
@@ -157,6 +281,13 @@ export default function AnalyticsPanel({
       )}
     </div>
   );
+}
+
+function formatLead(minutes: number): string {
+  if (minutes < 60) return `${Math.round(minutes)} 分钟`;
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  return m === 0 ? `${h} 小时` : `${h}h ${m}m`;
 }
 
 function OverviewTile({

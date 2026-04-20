@@ -251,6 +251,14 @@ export interface RiskControls {
   maxDailyWatches: number;         // 每日观察上限
   dailyLossLimit: number;          // 当日累计亏损触达后当天强制走观察
   monthlyMaxDrawdown: number;      // 月度累计亏损触达后锁一周（跨月重置）
+  cooldownMinutes?: number;        // 连亏后强制冷静期（分钟），默认 30；0 = 关
+  winStreakAlert?: number;         // 连胜 N 场弹软提示，默认 3；0 = 关
+  abnormalAmountMultiplier?: number; // 当笔金额 > 近 30 单均值 × 此倍数 → 软提示；默认 3；0 = 关
+}
+
+export interface Capital {
+  principal: number;               // 本金（登记用，不参与自动计算）
+  updatedAt?: string;              // 最近一次修改本金的时间
 }
 
 export interface GradeAmounts {
@@ -270,6 +278,7 @@ export interface AppSettings {
   riskControls: RiskControls;
   gradeAmounts: GradeAmounts;
   displayPrefs: DisplayPrefs;
+  capital?: Capital;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -354,6 +363,34 @@ export function isSemiHardStopped(scores: ScoreData): boolean {
       || scores.trap.score === 0;
 }
 
+/**
+ * 倒赔嫌疑：基本面"强弱"和庄家"方向"指向不同队 → 水位在贴弱队，疑似诱盘。
+ * 返回 null 表示正常；返回字符串 = 提示文案。
+ * 规则：strength=A(主强) + direction=B(利客) 或 strength=B(客强) + direction=A(利主)。
+ * 任一维度为 C(均衡/暧昧) 或未填 → 不触发。
+ */
+export function detectReverseWaterSuspicion(scores: ScoreData): string | null {
+  const strength = scores.fundamental.subdims?.strength;
+  const direction = scores.bookie.subdims?.direction;
+  if (!strength || !direction) return null;
+  if (strength === "A" && direction === "B") {
+    return "主队明显强，但水位/方向在贴客队——疑似倒赔诱盘";
+  }
+  if (strength === "B" && direction === "A") {
+    return "客队明显强，但水位/方向在贴主队——疑似倒赔诱盘";
+  }
+  return null;
+}
+
+/**
+ * 深夜单判定：下注时间落在 00:00-06:00（本地时区）。
+ * 深夜决策质量通常差，统计单独拉出来看。
+ */
+export function isLateNightBet(betTimeISO: string): boolean {
+  const h = new Date(betTimeISO).getHours();
+  return h >= 0 && h < 6;
+}
+
 export function suggestedAmount(grade: Grade, amounts: GradeAmounts, semiHardStopped?: boolean): number {
   const base = amounts[grade];
   // 半硬门槛：立场暧昧 → 建议金额砍半（再加个 50 元取整兜底，避免出现 12.5 这种）
@@ -425,6 +462,7 @@ export function isSidedHandicapComplete(sided: SidedHandicap): boolean {
 // ─── Review option constants (post-match feedback) ────────────────────────────
 // 6 symmetric error / positive items, paired by dimension.
 
+// 兼容旧数据：ERROR_OPTIONS 保留扁平列表（读取老记录仍可显示旧 chip）
 export const ERROR_OPTIONS: string[] = [
   "基本面误判",
   "赔率/盘口理解错误",
@@ -433,6 +471,38 @@ export const ERROR_OPTIONS: string[] = [
   "不该下却下了",
   "应转观察却下了",
 ];
+
+/**
+ * 失误多级化：4 大类 × 小项。
+ * 下注详情页复盘时用，选中的失误写入 result.errors[]（仍是字符串数组）。
+ * 旧数据里原有的 6 条扁平失误仍然可以渲染（只是不在新分组里）。
+ */
+export const ERROR_TAXONOMY: { category: string; items: string[] }[] = [
+  {
+    category: "基本面判断错",
+    items: ["状态看错", "伤停没掌握", "主客场忽略", "冷热度误判"],
+  },
+  {
+    category: "盘口判断错",
+    items: ["水位没看懂", "变盘没看懂", "开盘倾向读错"],
+  },
+  {
+    category: "庄家判断错",
+    items: ["立场误判", "倒赔中招", "陷阱上钩"],
+  },
+  {
+    category: "运气成分",
+    items: ["补时绝杀", "红黄牌影响", "乌龙/误判"],
+  },
+];
+
+/** 给定某条错误 label，返回所属大类（找不到返回 "其他"）。 */
+export function errorCategoryOf(label: string): string {
+  for (const grp of ERROR_TAXONOMY) {
+    if (grp.items.includes(label)) return grp.category;
+  }
+  return "其他";
+}
 
 export const DECISION_RATING_LABELS: Record<number, string> = {
   1: "差", 2: "勉强", 3: "尚可", 4: "良好", 5: "优秀",

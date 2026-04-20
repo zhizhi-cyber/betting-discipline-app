@@ -13,6 +13,8 @@ const KEYS = {
   BET_RECORDS:      "bda_bet_records",
   ABANDONED_RECORDS:"bda_abandoned_records",
   SETTINGS:         "bda_settings",
+  LAST_WEEKLY_DIGEST: "bda_last_weekly_digest",  // YYYY-MM-DD of last time weekly digest was shown
+  SCREENING_POOL:   "bda_screening_pool",        // 快筛今日候选池
 } as const;
 
 // ─── Default Settings ─────────────────────────────────────────────────────────
@@ -30,6 +32,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
     maxDailyWatches:         3,
     dailyLossLimit:          15000,
     monthlyMaxDrawdown:      50000,
+    cooldownMinutes:         30,
+    winStreakAlert:          3,
+    abnormalAmountMultiplier: 3,
+  },
+  capital: {
+    principal: 0,
   },
   gradeAmounts: {
     C: 6000,
@@ -202,6 +210,7 @@ export function getSettings(): AppSettings {
     riskControls: { ...DEFAULT_SETTINGS.riskControls, ...stored.riskControls },
     gradeAmounts: { ...DEFAULT_SETTINGS.gradeAmounts, ...stored.gradeAmounts },
     displayPrefs: { ...DEFAULT_SETTINGS.displayPrefs, ...stored.displayPrefs },
+    capital:      { ...DEFAULT_SETTINGS.capital!,     ...(stored.capital || {}) },
   };
 }
 
@@ -458,6 +467,95 @@ export function detectBehavioralViolations(params: {
   return reasons;
 }
 
+// ─── 软提示探测 (心理防线) ────────────────────────────────────────────────
+/**
+ * 返回"软提示"字符串数组——不阻塞下注，只在下注前弹出提醒。
+ * 用户看到后可继续下注；若继续，最终违纪原因里不会带上这些。
+ *  - 冷静期：距最近一笔"输/输半"结算完成时间不足 N 分钟（默认 30）
+ *  - 连胜警告：近 N 场已结算连赢（含赢半、排除走盘）
+ *  - 异常金额：当笔金额 > 近 30 单均值 × 倍数
+ */
+export function detectSoftWarnings(params: {
+  amount: number;
+  now?: Date;
+  settings?: AppSettings;
+  existingBets?: BetRecord[];
+  excludeId?: string;
+}): string[] {
+  const now = params.now ?? new Date();
+  const s = params.settings ?? getSettings();
+  const rc = s.riskControls;
+  const allBets = params.existingBets ?? getBetRecords();
+  const bets = params.excludeId ? allBets.filter((b) => b.id !== params.excludeId) : allBets;
+  const warnings: string[] = [];
+
+  // 按下注时间倒序
+  const sortedSettled = bets
+    .filter((b) => b.result)
+    .slice()
+    .sort((a, b) => {
+      const ta = new Date(a.bets[0]?.betTime || a.createdAt).getTime();
+      const tb = new Date(b.bets[0]?.betTime || b.createdAt).getTime();
+      return tb - ta;
+    });
+
+  // 1) 冷静期：最近一笔"输/输半"发生在 cooldownMinutes 以内
+  const cooldownMin = rc.cooldownMinutes ?? 30;
+  if (cooldownMin > 0) {
+    const lastLoss = sortedSettled.find(
+      (b) => b.result!.outcome === "loss" || b.result!.outcome === "half_loss"
+    );
+    if (lastLoss) {
+      const t = new Date(lastLoss.bets[0]?.betTime || lastLoss.createdAt).getTime();
+      const elapsedMin = (now.getTime() - t) / 60000;
+      if (elapsedMin >= 0 && elapsedMin < cooldownMin) {
+        const wait = Math.ceil(cooldownMin - elapsedMin);
+        warnings.push(`冷静期未过（刚输完 ${Math.round(elapsedMin)} 分钟，建议再等 ${wait} 分钟）`);
+      }
+    }
+  }
+
+  // 2) 连胜警告
+  const streakThreshold = rc.winStreakAlert ?? 3;
+  if (streakThreshold > 0) {
+    let streak = 0;
+    for (const b of sortedSettled) {
+      const o = b.result!.outcome;
+      if (o === "push") continue; // 走盘不打断也不计入
+      if (o === "win" || o === "half_win") streak++;
+      else break;
+    }
+    if (streak >= streakThreshold) {
+      warnings.push(`连赢已 ${streak} 场（警惕膨胀，建议维持平常金额）`);
+    }
+  }
+
+  // 3) 异常金额：近 30 单均值
+  const mult = rc.abnormalAmountMultiplier ?? 3;
+  if (mult > 0) {
+    const recent = bets
+      .slice()
+      .sort((a, b) => {
+        const ta = new Date(a.bets[0]?.betTime || a.createdAt).getTime();
+        const tb = new Date(b.bets[0]?.betTime || b.createdAt).getTime();
+        return tb - ta;
+      })
+      .slice(0, 30);
+    if (recent.length >= 5) {
+      const sum = recent.reduce(
+        (acc, b) => acc + b.bets.reduce((s, x) => s + x.amount, 0),
+        0
+      );
+      const avg = sum / recent.length;
+      if (avg > 0 && params.amount > avg * mult) {
+        warnings.push(`金额异常偏大（近 ${recent.length} 单均值 ¥${Math.round(avg).toLocaleString()}，本次 ¥${params.amount.toLocaleString()} > ${mult} 倍）`);
+      }
+    }
+  }
+
+  return warnings;
+}
+
 // ─── Grade win-rate breakdown ─────────────────────────────────────────────────
 // Half-win counts 0.5; push excluded from denominator.
 
@@ -581,6 +679,15 @@ export interface RecordsAnalytics {
     watchedThenAbandoned: { count: number; correct: number; rate: number };  // observed and stayed abandoned — rate = would-be-correct
     watchedThenBet: { count: number; win: number; rate: number };             // observed then promoted to bet
   };
+  /** 平均提前下单分钟数 (kickoff - betTime, 仅已结算有 betTime 的) */
+  avgLeadMinutes: number | null;
+  /** 深夜单 (00:00-06:00) 的对照统计 */
+  lateNight: {
+    count: number;
+    settled: number;
+    winRate: number;   // 盘面胜率（与主胜率同口径）
+    roi: number;       // 基于有效投注
+  };
 }
 
 export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord[]): RecordsAnalytics {
@@ -693,6 +800,46 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
       if (w.reviewConclusion === "abandon_correct" || w.reviewConclusion === "no_regret") abandonCorrect++;
     }
   }
+  // 平均赛前下单时长（分钟）：基于第一笔 betTime 和 kickoffTime 之差，取已结算单样本
+  let leadSum = 0;
+  let leadN = 0;
+  for (const r of bets) {
+    const bt = r.bets[0]?.betTime;
+    if (!bt) continue;
+    const kt = new Date(r.kickoffTime).getTime();
+    const bTime = new Date(bt).getTime();
+    const diff = (kt - bTime) / 60000;
+    if (diff > 0 && diff < 60 * 24 * 7) { // 过滤异常（负/> 7 天）
+      leadSum += diff;
+      leadN++;
+    }
+  }
+  const avgLeadMinutes = leadN > 0 ? leadSum / leadN : null;
+
+  // 深夜单统计（00:00-06:00 根据 betTime）
+  let lnCount = 0, lnSettled = 0, lnWins = 0, lnHalfWins = 0, lnPush = 0;
+  let lnEffBet = 0, lnPnl = 0;
+  for (const r of bets) {
+    const bt = r.bets[0]?.betTime;
+    if (!bt) continue;
+    const h = new Date(bt).getHours();
+    if (!(h >= 0 && h < 6)) continue;
+    lnCount++;
+    if (r.result) {
+      lnSettled++;
+      const o = r.result.outcome;
+      const ratio = effRatio(o);
+      lnEffBet += r.bets.reduce((s, b) => s + b.amount * ratio, 0);
+      lnPnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, o), 0);
+      if (o === "win") lnWins++;
+      else if (o === "half_win") lnHalfWins++;
+      else if (o === "push") lnPush++;
+    }
+  }
+  const lnNonPush = lnSettled - lnPush;
+  const lnWinRate = lnNonPush > 0 ? ((lnWins + lnHalfWins * 0.5) / lnNonPush) * 100 : 0;
+  const lnRoi = lnEffBet > 0 ? (lnPnl / lnEffBet) * 100 : 0;
+
   const promotedIds = new Set(watches.filter((w) => w.promotedToBetId).map((w) => w.promotedToBetId!));
   let promotedSettled = 0, promotedWins = 0;
   for (const r of bets) {
@@ -726,7 +873,95 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
         rate: promotedSettled > 0 ? (promotedWins / promotedSettled) * 100 : 0,
       },
     },
+    avgLeadMinutes,
+    lateNight: {
+      count: lnCount,
+      settled: lnSettled,
+      winRate: lnWinRate,
+      roi: lnRoi,
+    },
   };
+}
+
+// ─── 周简报触发判定 ────────────────────────────────────────────────────────
+/**
+ * 是否应显示本周周简报：
+ *  - 本地时间：周日（getDay()===0）22:00 以后
+ *  - 且本周尚未显示过（以 Monday-anchored week key 记忆）
+ * 返回 true 时调用方应弹窗；用户关闭后调用 markWeeklyDigestSeen()。
+ */
+export function shouldShowWeeklyDigest(now: Date = new Date()): boolean {
+  const dow = now.getDay();
+  const hr = now.getHours();
+  // 周日 22:00 以后，或周一 10:00 之前（跨过去后补弹一次）
+  const inWindow = (dow === 0 && hr >= 22) || (dow === 1 && hr < 10);
+  if (!inWindow) return false;
+  if (typeof window === "undefined") return false;
+  try {
+    const last = localStorage.getItem(KEYS.LAST_WEEKLY_DIGEST);
+    const wk = weekKey(now);
+    return last !== wk;
+  } catch {
+    return false;
+  }
+}
+
+export function markWeeklyDigestSeen(now: Date = new Date()): void {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(KEYS.LAST_WEEKLY_DIGEST, weekKey(now));
+  } catch {
+    // ignore
+  }
+}
+
+function weekKey(d: Date): string {
+  const ws = weekStart(d);
+  return `${ws.getFullYear()}-W-${ws.getMonth() + 1}-${ws.getDate()}`;
+}
+
+// ─── 今日候选池 (快筛模式) ────────────────────────────────────────────────
+export interface ScreeningItem {
+  id: string;
+  createdAt: string;
+  matchDayKey: string;          // 归属 match-day，用于"今日"过滤
+  matchName?: string;
+  homeTeam?: string;
+  awayTeam?: string;
+  kickoffTime?: string;
+  reliability: "A" | "B" | "C";  // 可靠吗
+  trap:        "A" | "B" | "C";  // 有陷阱吗
+  bookie:      "A" | "B" | "C";  // 庄家立场明吗
+  bucket: "dig" | "gray" | "pass";  // 全A=dig / 混合=gray / 有B=pass
+  note?: string;
+  promotedToBetId?: string;     // 如已深挖到完整复盘，记录链路
+}
+
+export function getScreeningPool(): ScreeningItem[] {
+  return load<ScreeningItem[]>(KEYS.SCREENING_POOL, []);
+}
+
+export function saveScreeningItem(item: ScreeningItem): void {
+  const all = getScreeningPool();
+  const idx = all.findIndex((x) => x.id === item.id);
+  if (idx >= 0) all[idx] = item;
+  else all.push(item);
+  save(KEYS.SCREENING_POOL, all);
+}
+
+export function deleteScreeningItem(id: string): void {
+  save(KEYS.SCREENING_POOL, getScreeningPool().filter((x) => x.id !== id));
+}
+
+export function clearScreeningPool(): void {
+  save(KEYS.SCREENING_POOL, []);
+}
+
+/** 判 bucket：全 A=dig；出现任何 B=pass（最差信号优先）；其它=gray。 */
+export function screeningBucket(r: "A"|"B"|"C", t: "A"|"B"|"C", b: "A"|"B"|"C"): "dig" | "gray" | "pass" {
+  if (r === "B" || t === "B" || b === "B") return "pass";
+  if (r === "A" && t === "A" && b === "A") return "dig";
+  return "gray";
 }
 
 // ─── Promote watch → bet ──────────────────────────────────────────────────────

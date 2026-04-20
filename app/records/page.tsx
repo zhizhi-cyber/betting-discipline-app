@@ -14,7 +14,7 @@ import {
   type UnifiedRecord,
   calcPnl,
 } from "@/lib/mock-data";
-import { weekStart, weekEnd, matchDayKey, matchDayStart, formatMatchDayLabel, formatBetDirection, parseKickoff } from "@/lib/types";
+import { weekStart, weekEnd, matchDayKey, matchDayStart, formatMatchDayLabel, formatBetDirection, parseKickoff, isLateNightBet } from "@/lib/types";
 import { getBetRecords, getAbandonedRecords, getSettings, saveSettings } from "@/lib/storage";
 import { formatMoneyShort, formatSigned } from "@/lib/format";
 import BottomNav from "@/components/bottom-nav";
@@ -243,6 +243,12 @@ function BetRow({ r }: { r: BetRecord }) {
                 className="text-[9px] px-1 py-0.5 rounded bg-warning/15 text-warning shrink-0"
                 title={r.violationReason || "违纪"}
               >违纪</span>
+            )}
+            {r.bets[0]?.betTime && isLateNightBet(r.bets[0].betTime) && (
+              <span
+                className="text-[9px] px-1 py-0.5 rounded bg-[#6ea8d8]/15 text-[#6ea8d8] shrink-0"
+                title="下注时间在 00:00-06:00"
+              >深夜</span>
             )}
           </div>
           {(r.homeTeam || r.awayTeam) && (

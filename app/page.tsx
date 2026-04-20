@@ -6,9 +6,10 @@ import { useRouter } from "next/navigation";
 import { Plus, Settings, ChevronRight, Target, Activity, TrendingUp } from "lucide-react";
 import { motion, useMotionValue, useTransform, animate } from "motion/react";
 import { getTotalPnl, getTotalBetAmount, type Outcome, type ReviewConclusion, type BetRecord, type AbandonedRecord } from "@/lib/mock-data";
-import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, calcYearStats, calcWeekStats, calcAllTimeStats, syncPendingReview, countToday, dailyBetLimitFor, calcLockState, calcDailyPnlSeries, calcWeeklyPnlSeries, formatLockMessage, type LockState } from "@/lib/storage";
+import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, calcYearStats, calcWeekStats, calcAllTimeStats, syncPendingReview, countToday, dailyBetLimitFor, calcLockState, calcDailyPnlSeries, calcWeeklyPnlSeries, formatLockMessage, shouldShowWeeklyDigest, markWeeklyDigestSeen, type LockState } from "@/lib/storage";
 import { calcPnl, weekStart, weekEnd, matchDayKey, matchDayStart, parseKickoff, formatBetDirection } from "@/lib/types";
 import PnlBars from "@/components/pnl-bars";
+import WeeklyDigest from "@/components/weekly-digest";
 // Hero combines PnL and goal tracking; home orchestrates glass UI accented with sparkline + halo.
 import BottomNav from "@/components/bottom-nav";
 
@@ -102,6 +103,7 @@ export default function HomePage() {
   const [allBets, setAllBets] = useState<BetRecord[]>([]);
   const [allAbandoned, setAllAbandoned] = useState<AbandonedRecord[]>([]);
   const [lockState, setLockState] = useState<LockState | null>(null);
+  const [weeklyDigestOpen, setWeeklyDigestOpen] = useState(false);
 
   // Initial load
   useEffect(() => {
@@ -116,6 +118,7 @@ export default function HomePage() {
     setAllBets(getBetRecords());
     setAllAbandoned(getAbandonedRecords());
     setLockState(calcLockState(new Date(), settings));
+    if (shouldShowWeeklyDigest()) setWeeklyDigestOpen(true);
     setMounted(true);
   }, []);
 
@@ -493,6 +496,15 @@ export default function HomePage() {
             开始纪律审查
           </Link>
         </motion.div>
+        <motion.div whileTap={{ scale: 0.98 }}>
+          <Link
+            href="/screening"
+            className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl border border-border bg-card/40 hover:bg-card/60 transition-colors text-foreground font-semibold text-xs"
+          >
+            <Target size={13} strokeWidth={2} />
+            今日扫盘 · 三问分档
+          </Link>
+        </motion.div>
         <div className="flex items-center gap-3 pt-1 text-[11px] text-muted-foreground">
           <span>
             今日下注
@@ -650,6 +662,17 @@ export default function HomePage() {
       </div>
 
       <BottomNav />
+
+      {weeklyDigestOpen && (
+        <WeeklyDigest
+          allBets={allBets}
+          allWatches={allAbandoned}
+          onClose={() => {
+            markWeeklyDigestSeen();
+            setWeeklyDigestOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }

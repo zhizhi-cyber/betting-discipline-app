@@ -156,7 +156,55 @@ export default function SettingsPage() {
               desc="当月累计亏损达到后，强制锁 7 天（跨月重置）"
               onChange={(v) => update("riskControls")("monthlyMaxDrawdown", v)}
             />
+            <SettingRow
+              label="冷静期"
+              value={settings.riskControls.cooldownMinutes ?? 30}
+              suffix="分钟"
+              desc="刚输完这段时间内下注，会弹软提示（0 = 关）"
+              onChange={(v) => update("riskControls")("cooldownMinutes", v)}
+              isInteger
+            />
+            <SettingRow
+              label="连胜提醒"
+              value={settings.riskControls.winStreakAlert ?? 3}
+              suffix="场"
+              desc="连赢 N 场后下注时弹软提示（0 = 关）"
+              onChange={(v) => update("riskControls")("winStreakAlert", v)}
+              isInteger
+            />
+            <SettingRow
+              label="异常金额倍数"
+              value={settings.riskControls.abnormalAmountMultiplier ?? 3}
+              suffix="倍"
+              desc="本次金额 > 近 30 单均值 × 此倍数，弹软提示（0 = 关）"
+              onChange={(v) => update("riskControls")("abnormalAmountMultiplier", v)}
+              isInteger
+            />
           </div>
+        </section>
+
+        {/* ── Capital ──────────────────────────────────────────────── */}
+        <section>
+          <SectionLabel>本金（登记用）</SectionLabel>
+          <div className="border border-border rounded-md overflow-hidden divide-y divide-border">
+            <SettingRow
+              label="当前本金"
+              value={settings.capital?.principal ?? 0}
+              prefix="¥"
+              desc="只做登记，不参与自动计算；建议每次增减后手动改"
+              onChange={(v) => {
+                setSettings((prev) => ({
+                  ...prev,
+                  capital: { principal: v, updatedAt: new Date().toISOString() },
+                }));
+              }}
+            />
+          </div>
+          {settings.capital?.updatedAt && (
+            <p className="text-[10px] text-muted-foreground/60 mt-2">
+              上次更新：{new Date(settings.capital.updatedAt).toLocaleString("zh-CN", { hour12: false })}
+            </p>
+          )}
         </section>
 
         {/* ── Grade Amounts ─────────────────────────────────────────── */}
