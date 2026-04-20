@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, ArrowLeft } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
   getTotalPnl,
   getTotalBetAmount,
@@ -538,8 +538,7 @@ function WeekView({
     <div className="min-h-screen pb-28">
       <div className="sticky top-0 z-20 bg-background border-b border-border">
         <div className="flex items-center gap-3 px-4 py-3">
-          <Link href="/" className="text-muted-foreground"><ArrowLeft size={16} /></Link>
-          <span className="font-semibold text-sm flex-1">记录</span>
+          <div className="flex-1" />
           <ViewToggle viewMode={viewMode} setViewMode={setViewMode} />
         </div>
 
@@ -667,8 +666,7 @@ function YearView({
     <div className="min-h-screen pb-28">
       <div className="sticky top-0 z-20 bg-background border-b border-border">
         <div className="flex items-center gap-3 px-4 py-3">
-          <Link href="/" className="text-muted-foreground"><ArrowLeft size={16} /></Link>
-          <span className="font-semibold text-sm flex-1">记录</span>
+          <div className="flex-1" />
           <ViewToggle viewMode={viewMode} setViewMode={setViewMode} />
         </div>
 
@@ -804,8 +802,7 @@ function MonthListView({
     <div className="min-h-screen pb-28">
       <div className="sticky top-0 z-20 bg-background border-b border-border">
         <div className="flex items-center gap-3 px-4 py-3">
-          <Link href="/" className="text-muted-foreground"><ArrowLeft size={16} /></Link>
-          <span className="font-semibold text-sm flex-1">记录</span>
+          <div className="flex-1" />
           <ViewToggle viewMode={viewMode} setViewMode={setViewMode} />
         </div>
 
