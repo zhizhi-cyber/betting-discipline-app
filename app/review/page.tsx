@@ -603,11 +603,31 @@ function ReviewInner() {
     const amt = parseAmount(confirmAmount);
     if (!amt.ok) { setConfirmAmountError(amt.error || "金额无效"); return; }
     const amount = amt.value;
-    const isViolation = amount > suggestedAmount;
     const parsedOdds = parseOddsInput(odds);
     if (!parsedOdds.ok) { setOddsError(parsedOdds.error || "水位无效"); setConfirmOpen(false); return; }
     const finalOdds = parsedOdds.value;
     const firstBet = orig.bets[0];
+    // 编辑时也跑行为违纪检测（"同场重复"排除自己这条，防照镜子）
+    const reasons: string[] = [];
+    if (amount > suggestedAmount) {
+      reasons.push(
+        orig.convertedFromWatchId
+          ? "观察转下注（原判断应观察不下注）"
+          : `超建议金额（建议 ¥${suggestedAmount}，实投 ¥${amount}）`
+      );
+    } else if (orig.convertedFromWatchId) {
+      // 保留原来的"观察转下注"违纪标签（即使金额没超）
+      reasons.push("观察转下注（原判断应观察不下注）");
+    }
+    reasons.push(...detectBehavioralViolations({
+      amount,
+      kickoffISO: kickoffTime ? normalizeKickoff(kickoffTime) : orig.kickoffTime,
+      homeTeam: homeTeam || orig.homeTeam,
+      awayTeam: awayTeam || orig.awayTeam,
+      excludeId: orig.id,
+    }));
+    const isViolation = reasons.length > 0;
+    const violationReason = reasons.length > 0 ? reasons.join(" + ") : undefined;
     saveBetRecord({
       ...orig,
       match: matchName || orig.match,
@@ -635,11 +655,7 @@ function ReviewInner() {
         ...orig.bets.slice(1),
       ],
       isDisciplineViolation: isViolation,
-      violationReason: isViolation
-        ? (orig.convertedFromWatchId
-            ? "观察转下注（原判断应观察不下注）"
-            : `超建议金额（建议 ¥${suggestedAmount}，实投 ¥${amount}）`)
-        : undefined,
+      violationReason,
       // Preserve: id, completionStatus, createdAt, result, convertedFromWatchId
     });
     // 编辑已结算单的金额会反算 PnL → 可能刚好触发/解除封锁。给个即时反馈。

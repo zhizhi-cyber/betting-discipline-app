@@ -396,9 +396,12 @@ export function detectBehavioralViolations(params: {
   awayTeam: string;
   now?: Date;
   existingBets?: BetRecord[];
+  /** 编辑模式：把自己这条记录排除掉，避免「同场重复」把自己算进去（照镜子问题）。 */
+  excludeId?: string;
 }): string[] {
   const now = params.now ?? new Date();
-  const bets = params.existingBets ?? getBetRecords();
+  const allBets = params.existingBets ?? getBetRecords();
+  const bets = params.excludeId ? allBets.filter((b) => b.id !== params.excludeId) : allBets;
   const reasons: string[] = [];
 
   // 1) 连败追损：按下注时间倒序取最近 2 条已结算，都负且本次金额更大
