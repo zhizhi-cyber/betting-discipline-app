@@ -143,7 +143,7 @@ export default function PnlBars({
         const dx = e.touches[0].clientX - e.touches[1].clientX;
         const dy = e.touches[0].clientY - e.touches[1].clientY;
         const d = Math.hypot(dx, dy);
-        const next = Math.max(1, Math.min(5, initZoom * (d / initDist)));
+        const next = Math.max(0.5, Math.min(8, initZoom * (d / initDist)));
         setZoom(next);
         e.preventDefault();
       }
@@ -183,7 +183,7 @@ export default function PnlBars({
   const midY = padTop + half;
 
   const bandW = innerW / data.length;
-  const barW = Math.max(2, Math.min(18, bandW * 0.65));
+  const barW = Math.max(1, Math.min(18, bandW * 0.75));
 
   // Y-axis ticks: 3 ticks (+max, 0, -max)
   const leftTicks = [maxAbsPnl, 0, -maxAbsPnl];
@@ -194,7 +194,7 @@ export default function PnlBars({
   if (gran === "day") {
     // Mark 1st of month + roughly every 5 or 7 days depending on span
     const span = data.length;
-    const step = span <= 10 ? 1 : span <= 35 ? 5 : 7;
+    const step = span <= 10 ? 1 : span <= 35 ? 5 : span <= 90 ? 10 : span <= 200 ? 20 : 30;
     data.forEach((d, i) => {
       const dt = parseKey(d.key);
       const isFirst = dt.getDate() === 1;
@@ -260,7 +260,7 @@ export default function PnlBars({
             {zoomable && (
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => setZoom((z) => Math.max(1, +(z - 0.5).toFixed(2)))}
+                  onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.5).toFixed(2)))}
                   className="w-5 h-5 rounded border border-border text-[11px] leading-none flex items-center justify-center text-muted-foreground active:opacity-60"
                   aria-label="zoom out"
                 >−</button>
@@ -268,7 +268,7 @@ export default function PnlBars({
                   {zoom.toFixed(1)}x
                 </span>
                 <button
-                  onClick={() => setZoom((z) => Math.min(5, +(z + 0.5).toFixed(2)))}
+                  onClick={() => setZoom((z) => Math.min(8, +(z + 0.5).toFixed(2)))}
                   className="w-5 h-5 rounded border border-border text-[11px] leading-none flex items-center justify-center text-muted-foreground active:opacity-60"
                   aria-label="zoom in"
                 >+</button>

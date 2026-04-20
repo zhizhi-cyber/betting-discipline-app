@@ -73,13 +73,14 @@ function filterByWeek(items: UnifiedRecord[], anchor: Date): UnifiedRecord[] {
   });
 }
 
-// Daily PnL bars for a week (7 bars, Monday-anchored).
-function dailyBarsForWeek(bets: BetRecord[], weekAnchor: Date): { key: string; pnl: number }[] {
-  const ws = weekStart(weekAnchor);
+// Daily PnL bars for a calendar year — 365/366 days, cropped at today.
+function dailyBarsForYear(bets: BetRecord[], year: number): { key: string; pnl: number }[] {
+  const daysInYear = ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0) ? 366 : 365;
+  const now = new Date();
   const out: { key: string; pnl: number }[] = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(ws);
-    d.setDate(d.getDate() + i);
+  for (let i = 0; i < daysInYear; i++) {
+    const d = new Date(year, 0, 1 + i);
+    if (d > now) break;
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
     const dd = String(d.getDate()).padStart(2, "0");
@@ -95,16 +96,18 @@ function dailyBarsForWeek(bets: BetRecord[], weekAnchor: Date): { key: string; p
   return out;
 }
 
-// Daily PnL bars for a calendar month (1 bar per day; grouped by match-day).
-function dailyBarsForMonth(bets: BetRecord[], year: number, month: number): { key: string; pnl: number }[] {
-  const daysInMonth = new Date(year, month, 0).getDate();
+// Monthly PnL bars for a calendar year — up to 12 months, cropped at current month.
+function monthlyBarsForYear(bets: BetRecord[], year: number): { key: string; pnl: number }[] {
+  const now = new Date();
+  const maxMonth = year < now.getFullYear() ? 12 : year === now.getFullYear() ? now.getMonth() + 1 : 0;
   const out: { key: string; pnl: number }[] = [];
-  for (let d = 1; d <= daysInMonth; d++) {
-    const k = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  for (let m = 1; m <= maxMonth; m++) {
+    const k = `${year}-${String(m).padStart(2, "0")}-01`;
     let pnl = 0;
     for (const r of bets) {
       if (!r.result) continue;
-      if (matchDayKey(r.kickoffTime) !== k) continue;
+      const a = matchDayStart(r.kickoffTime);
+      if (a.getFullYear() !== year || a.getMonth() + 1 !== m) continue;
       pnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, r.result!.outcome), 0);
     }
     out.push({ key: k, pnl });
@@ -550,26 +553,62 @@ function WeekView({
       </div>
 
       <div className="px-4 py-3 space-y-4">
-        {stats.settled > 0 && (
-          <div className="border border-border rounded-md bg-card/40 px-3 pt-2 pb-3">
-            <div className="flex items-center justify-between mb-1.5">
-              <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                周K · 每日盈亏
-              </p>
-              <div className="flex items-center gap-2 text-[9px] font-mono tabular-nums">
-                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-profit" />盈</span>
-                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-loss" />亏</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-px" style={{ background: "#f5c842" }} />累计</span>
-              </div>
-            </div>
-            <PnlBars data={dailyBarsForWeek(weekBets, weekAnchor)} height={140} />
-          </div>
-        )}
         <AnalyticsPanel bets={weekBets} watches={weekWatches} />
         <GroupedList items={weekItems} highlightDate={highlightDate} />
       </div>
 
       <BottomNav />
+    </div>
+  );
+}
+
+// ─── Year K-Line (day / week / month toggle) ──────────────────────────────────
+
+type KGran = "day" | "week" | "month";
+
+function YearKLine({ year, yearBets }: { year: number; yearBets: BetRecord[] }) {
+  const [gran, setGran] = useState<KGran>("week");
+  const data = useMemo(() => {
+    if (gran === "day") return dailyBarsForYear(yearBets, year);
+    if (gran === "month") return monthlyBarsForYear(yearBets, year);
+    return weeklyBarsForYear(yearBets, year);
+  }, [gran, yearBets, year]);
+
+  const label = gran === "day" ? "日K" : gran === "week" ? "周K" : "月K";
+  const subtitle = gran === "day" ? "每日盈亏" : gran === "week" ? "每周盈亏" : "每月盈亏";
+
+  return (
+    <div className="border border-border rounded-md bg-card/40 px-3 pt-2 pb-3">
+      <div className="flex items-center justify-between mb-2 gap-2">
+        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest shrink-0">
+          {label} · {year}年{subtitle}
+        </p>
+        <div className="flex items-center gap-0.5 bg-muted/60 rounded-sm p-0.5">
+          {(["day", "week", "month"] as const).map((g) => (
+            <button
+              key={g}
+              onClick={() => setGran(g)}
+              className={`text-[10px] px-2 py-0.5 rounded-sm transition-colors ${
+                gran === g ? "bg-background text-foreground font-semibold" : "text-muted-foreground"
+              }`}
+            >
+              {g === "day" ? "日K" : g === "week" ? "周K" : "月K"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center justify-end gap-2 text-[9px] font-mono tabular-nums mb-1">
+        <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-profit" />盈</span>
+        <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-loss" />亏</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-px" style={{ background: "#f5c842" }} />累计</span>
+      </div>
+      <PnlBars
+        key={gran}
+        data={data}
+        height={170}
+        zoomable
+        compactEmpty={gran === "day"}
+      />
     </div>
   );
 }
@@ -646,19 +685,7 @@ function YearView({
 
       <div className="px-4 py-3 space-y-4">
         {yearStats.settled > 0 && (
-          <div className="border border-border rounded-md bg-card/40 px-3 pt-2 pb-3">
-            <div className="flex items-center justify-between mb-1.5">
-              <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                周K · {year}年每周盈亏
-              </p>
-              <div className="flex items-center gap-2 text-[9px] font-mono tabular-nums">
-                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-profit" />盈</span>
-                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-loss" />亏</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-px" style={{ background: "#f5c842" }} />累计</span>
-              </div>
-            </div>
-            <PnlBars data={weeklyBarsForYear(yearBets, year)} height={160} zoomable compactEmpty />
-          </div>
+          <YearKLine year={year} yearBets={yearBets} />
         )}
         {hasAnyData && <AnalyticsPanel bets={yearBets} watches={yearAbandoned} />}
         {!hasAnyData ? (
@@ -800,21 +827,6 @@ function MonthListView({
 
       <div className="px-4 py-3 space-y-4">
         <CalendarGrid year={year} month={month} allUnified={allUnified} />
-        {stats.settled > 0 && (
-          <div className="border border-border rounded-md bg-card/40 px-3 pt-2 pb-3">
-            <div className="flex items-center justify-between mb-1.5">
-              <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-                日K · {month}月每日盈亏
-              </p>
-              <div className="flex items-center gap-2 text-[9px] font-mono tabular-nums">
-                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-profit" />盈</span>
-                <span className="flex items-center gap-1"><span className="w-1.5 h-1.5 rounded-sm bg-loss" />亏</span>
-                <span className="flex items-center gap-1"><span className="w-2 h-px" style={{ background: "#f5c842" }} />累计</span>
-              </div>
-            </div>
-            <PnlBars data={dailyBarsForMonth(monthBets, year, month)} height={140} zoomable compactEmpty />
-          </div>
-        )}
         <AnalyticsPanel bets={monthBets} watches={monthWatches} />
         <GroupedList items={monthItems} />
       </div>
