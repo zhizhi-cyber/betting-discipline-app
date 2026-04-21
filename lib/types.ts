@@ -551,6 +551,64 @@ export const POSITIVE_OPTIONS: string[] = [
   "该转观察果断转了",
 ];
 
+/**
+ * 做得好多级化：镜像 ERROR_TAXONOMY 的 4 大类 + 执行纪律。
+ * 复盘/记录详情页选中的亮点写入 result.positiveNotes[]（仍是字符串数组）。
+ */
+export const POSITIVE_TAXONOMY: { category: string; items: string[] }[] = [
+  {
+    category: "基本面判断对",
+    items: ["状态读对", "伤停情报到位", "主客场利用对", "冷热度判断准"],
+  },
+  {
+    category: "盘口判断对",
+    items: ["水位读懂", "变盘看懂", "开盘倾向读对"],
+  },
+  {
+    category: "庄家判断对",
+    items: ["立场看清", "避开倒赔", "识破陷阱"],
+  },
+  {
+    category: "执行纪律",
+    items: ["情绪控制到位", "该下果断下", "该转观察果断转", "仓位守住"],
+  },
+];
+
+/** 给定某条亮点 label，返回所属大类。 */
+export function positiveCategoryOf(label: string): string {
+  for (const grp of POSITIVE_TAXONOMY) {
+    if (grp.items.includes(label)) return grp.category;
+  }
+  return "其他";
+}
+
+/**
+ * 亮点权重（1=轻 / 2=中 / 3=重），与 ERROR_WEIGHTS 对称：
+ * 重 = 核心能力（盘口、庄家立场、倒赔、伤停）
+ * 中 = 读盘/判势 + 情绪仓位
+ * 轻 = 果断类动作
+ */
+export const POSITIVE_WEIGHTS: Record<string, 1 | 2 | 3> = {
+  "状态读对": 2,
+  "伤停情报到位": 3,
+  "主客场利用对": 2,
+  "冷热度判断准": 2,
+  "水位读懂": 3,
+  "变盘看懂": 2,
+  "开盘倾向读对": 2,
+  "立场看清": 3,
+  "避开倒赔": 3,
+  "识破陷阱": 2,
+  "情绪控制到位": 2,
+  "该下果断下": 1,
+  "该转观察果断转": 1,
+  "仓位守住": 2,
+};
+
+export function positiveWeightOf(label: string): 1 | 2 | 3 {
+  return POSITIVE_WEIGHTS[label] ?? 2;
+}
+
 // Count signals A=home, B=away, C=balanced across sidedMapping subdims
 export function countSignals(scores: ScoreData): { home: number; away: number; balanced: number; total: number } {
   let home = 0, away = 0, balanced = 0, total = 0;

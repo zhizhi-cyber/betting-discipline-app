@@ -82,6 +82,20 @@ export default function AnalyticsPanel({
         />
       </div>
 
+      {/* 盘面结果分布 */}
+      {a.settledCount > 0 && (
+        <GlassCard title="盘面结果分布" icon={<Trophy size={10} strokeWidth={2} />}>
+          <OutcomeBreakdown a={a.outcomeBreakdown} settled={a.settledCount} />
+        </GlassCard>
+      )}
+
+      {/* 按纪律 vs 违纪 对照 */}
+      {bets.length > 0 && (a.disciplineCompare.disciplined.count > 0 || a.disciplineCompare.violated.count > 0) && (
+        <GlassCard title="按纪律 vs 违纪" icon={<Shield size={10} strokeWidth={2} />}>
+          <DisciplineCompare dc={a.disciplineCompare} />
+        </GlassCard>
+      )}
+
       {/* Grade win-rate breakdown — 4 tiles (S A B C) */}
       {anyGradeSample && (
         <GlassCard title="信心级别胜率" icon={<Sparkles size={10} strokeWidth={2} />}>
@@ -367,6 +381,102 @@ function GlassCard({
         <span>{title}</span>
       </div>
       {children}
+    </div>
+  );
+}
+
+// ── 盘面结果分布 ─────────────────────────────────────────────
+function OutcomeBreakdown({
+  a, settled,
+}: {
+  a: { win: number; halfWin: number; push: number; halfLoss: number; loss: number };
+  settled: number;
+}) {
+  const items: { key: string; label: string; value: number; cls: string; bar: string }[] = [
+    { key: "win",      label: "赢",   value: a.win,      cls: "text-profit",          bar: "bg-profit" },
+    { key: "halfWin",  label: "赢半", value: a.halfWin,  cls: "text-profit/80",       bar: "bg-profit/70" },
+    { key: "push",     label: "走",   value: a.push,     cls: "text-muted-foreground", bar: "bg-muted-foreground/40" },
+    { key: "halfLoss", label: "输半", value: a.halfLoss, cls: "text-loss/80",         bar: "bg-loss/70" },
+    { key: "loss",     label: "输",   value: a.loss,     cls: "text-loss",            bar: "bg-loss" },
+  ];
+  return (
+    <div>
+      {/* 堆叠条 */}
+      <div className="flex h-2 rounded overflow-hidden bg-muted mb-2">
+        {items.map((it) =>
+          it.value > 0 ? (
+            <div key={it.key} className={it.bar} style={{ width: `${(it.value / settled) * 100}%` }} />
+          ) : null
+        )}
+      </div>
+      {/* 5 列数字 */}
+      <div className="grid grid-cols-5 gap-1">
+        {items.map((it) => (
+          <div key={it.key} className="text-center">
+            <p className="text-[9px] text-muted-foreground">{it.label}</p>
+            <p className={`text-sm font-black font-mono tabular-nums ${it.cls}`}>{it.value}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── 按纪律 vs 违纪 ───────────────────────────────────────────
+function DisciplineCompare({
+  dc,
+}: {
+  dc: {
+    disciplined: { count: number; settled: number; winRate: number; roi: number; totalPnl: number };
+    violated:    { count: number; settled: number; winRate: number; roi: number; totalPnl: number };
+  };
+}) {
+  const rows: { k: "disciplined" | "violated"; label: string; emoji: string; d: typeof dc.disciplined; accent: string }[] = [
+    { k: "disciplined", label: "按纪律", emoji: "✓", d: dc.disciplined, accent: "text-profit" },
+    { k: "violated",    label: "违纪",   emoji: "⚠", d: dc.violated,    accent: "text-warning" },
+  ];
+  const roiDelta = dc.disciplined.settled > 0 && dc.violated.settled > 0
+    ? dc.disciplined.roi - dc.violated.roi
+    : null;
+  return (
+    <div className="space-y-2">
+      {rows.map(({ k, label, emoji, d, accent }) => {
+        const hasSettled = d.settled > 0;
+        const winCls = !hasSettled ? "text-muted-foreground/40" : d.winRate >= 50 ? "text-profit" : "text-loss";
+        const roiCls = !hasSettled ? "text-muted-foreground/40" : d.roi >= 0 ? "text-profit" : "text-loss";
+        return (
+          <div key={k} className="flex items-center gap-2 rounded bg-card/40 px-2 py-2">
+            <div className={`text-[10px] font-bold w-14 shrink-0 ${accent}`}>
+              <span className="mr-1">{emoji}</span>{label}
+            </div>
+            <div className="text-[10px] text-muted-foreground font-mono shrink-0 w-10">
+              {d.count} 场
+            </div>
+            <div className="flex-1 grid grid-cols-2 gap-1 text-center">
+              <div>
+                <p className="text-[9px] text-muted-foreground">胜率</p>
+                <p className={`text-xs font-black font-mono tabular-nums ${winCls}`}>
+                  {hasSettled ? `${d.winRate.toFixed(0)}%` : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-[9px] text-muted-foreground">ROI</p>
+                <p className={`text-xs font-black font-mono tabular-nums ${roiCls}`}>
+                  {hasSettled ? `${d.roi >= 0 ? "+" : ""}${d.roi.toFixed(0)}%` : "—"}
+                </p>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+      {roiDelta != null && (
+        <p className="text-[10px] text-center text-muted-foreground">
+          按纪律比违纪 ROI{" "}
+          <span className={roiDelta >= 0 ? "text-profit font-semibold" : "text-loss font-semibold"}>
+            {roiDelta >= 0 ? "高" : "低"} {Math.abs(roiDelta).toFixed(0)}%
+          </span>
+        </p>
+      )}
     </div>
   );
 }

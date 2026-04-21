@@ -5,8 +5,8 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, ChevronDown, ChevronUp, Trash2, Star, Pencil } from "lucide-react";
 import type { Outcome, BetRecord, AnalysisVerdict, ScoreData, SidedHandicap } from "@/lib/types";
-import { calcPnl, getTotalBetAmount, SUBDIMS, formatBetPreview, formatSidedHandicap, ERROR_OPTIONS, ERROR_TAXONOMY, POSITIVE_OPTIONS, parseKickoff, DECISION_RATING_LABELS, errorWeightOf } from "@/lib/types";
-import { getBetRecords, saveBetRecord, deleteBetRecord } from "@/lib/storage";
+import { calcPnl, getTotalBetAmount, SUBDIMS, formatBetPreview, formatSidedHandicap, ERROR_OPTIONS, ERROR_TAXONOMY, POSITIVE_TAXONOMY, parseKickoff, DECISION_RATING_LABELS, errorWeightOf, positiveWeightOf } from "@/lib/types";
+import { getBetRecords, saveBetRecord, deleteBetRecord, getAbandonedRecords } from "@/lib/storage";
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
 
@@ -76,8 +76,18 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
       setDecisionRating(record.result?.decisionRating ?? 0);
       setReviewNote(record.result?.reviewNote ?? "");
       setAnalysisVerdict(record.result?.analysisVerdict ?? null);
-      setScoreHome(record.result?.finalScore?.home != null ? String(record.result.finalScore.home) : "");
-      setScoreAway(record.result?.finalScore?.away != null ? String(record.result.finalScore.away) : "");
+      // 观察→下注 的比分同步：若本下注尚未填比分但源观察已有赛果，预填
+      let homeInit = record.result?.finalScore?.home;
+      let awayInit = record.result?.finalScore?.away;
+      if ((homeInit == null || awayInit == null) && "convertedFromWatchId" in record && record.convertedFromWatchId) {
+        const src = getAbandonedRecords().find((w) => w.id === record.convertedFromWatchId);
+        if (src?.finalScore) {
+          if (homeInit == null) homeInit = src.finalScore.home;
+          if (awayInit == null) awayInit = src.finalScore.away;
+        }
+      }
+      setScoreHome(homeInit != null ? String(homeInit) : "");
+      setScoreAway(awayInit != null ? String(awayInit) : "");
     }
   }, [record]);
 
@@ -463,21 +473,52 @@ export default function RecordDetail({ id: propId }: { id?: string }) {
               </div>
             )}
 
-            {/* Positive notes */}
+            {/* Positive notes — 按大类分组（镜像失误结构） */}
             <div>
-              <p className="text-[11px] font-bold text-foreground mb-2">哪里做得好</p>
-              <div className="grid grid-cols-2 gap-1.5">
-                {POSITIVE_OPTIONS.map((note) => (
-                  <button key={note} onClick={() => togglePositive(note)}
-                    className={`px-3 py-2.5 rounded text-xs font-medium text-left leading-tight transition-colors ${
-                      checkedPositives.includes(note)
-                        ? "bg-profit/15 text-profit border border-profit/30"
-                        : "bg-muted text-muted-foreground"
-                    }`}
-                  >
-                    {note}
-                  </button>
+              <p className="text-[11px] font-bold text-foreground mb-2">哪里做得好（多选）</p>
+              <div className="space-y-2">
+                {POSITIVE_TAXONOMY.map((grp) => (
+                  <div key={grp.category}>
+                    <p className="text-[10px] text-muted-foreground/70 mb-1">{grp.category}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {grp.items.map((note) => {
+                        const w = positiveWeightOf(note);
+                        const sev = w === 3 ? "重" : w === 2 ? "中" : "轻";
+                        const sevCls = w === 3 ? "text-profit" : w === 2 ? "text-warning" : "text-muted-foreground";
+                        return (
+                          <button key={note} onClick={() => togglePositive(note)}
+                            className={`px-2.5 py-1.5 rounded text-[11px] font-medium leading-tight transition-colors inline-flex items-center gap-1 ${
+                              checkedPositives.includes(note)
+                                ? "bg-profit/15 text-profit border border-profit/30"
+                                : "bg-muted text-muted-foreground"
+                            }`}
+                          >
+                            <span className={`text-[8px] font-bold px-1 rounded border border-current/40 ${checkedPositives.includes(note) ? "" : sevCls}`}>{sev}</span>
+                            {note}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
                 ))}
+                {/* 旧数据里有但不在新分类里的扁平项，保留可取消 */}
+                {(() => {
+                  const known = new Set(POSITIVE_TAXONOMY.flatMap((g) => g.items));
+                  const legacy = checkedPositives.filter((n) => !known.has(n));
+                  if (legacy.length === 0) return null;
+                  return (
+                    <div>
+                      <p className="text-[10px] text-muted-foreground/70 mb-1">历史选项</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {legacy.map((note) => (
+                          <button key={note} onClick={() => togglePositive(note)}
+                            className="px-2.5 py-1.5 rounded text-[11px] bg-profit/15 text-profit border border-profit/30"
+                          >{note}</button>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 

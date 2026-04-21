@@ -771,6 +771,13 @@ export interface RecordsAnalytics {
   // 分母 = 已结算场次 − 走盘场次。避免让整数让球"走盘是盘口必然"的结构被算作拖后腿。
   winRate: number;
   settledCount: number;
+  /** 盘面结果分布（已结算） */
+  outcomeBreakdown: { win: number; halfWin: number; push: number; halfLoss: number; loss: number };
+  /** 按纪律 vs 违纪 对照（违纪 = isDisciplineViolation） */
+  disciplineCompare: {
+    disciplined: { count: number; settled: number; winRate: number; roi: number; totalPnl: number };
+    violated:    { count: number; settled: number; winRate: number; roi: number; totalPnl: number };
+  };
   totalPnl: number;
   totalBet: number;              // 全部本金投入（含 push 退本部分）
   effectiveBet: number;          // 有效投注（剔除走盘与走水退本的本金），用于 ROI
@@ -822,20 +829,39 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
   let wins = 0;
   let halfWins = 0;
   let pushes = 0;
+  let halfLosses = 0;
+  let losses = 0;
   let violations = 0;
 
+  // 按纪律 / 违纪 两桶分别累积
+  const bucket = () => ({ count: 0, settled: 0, wins: 0, halfWins: 0, pushes: 0, effectiveBet: 0, totalPnl: 0, totalPnlRaw: 0 });
+  const disc = bucket();
+  const viol = bucket();
+
+  const isViolated = (r: BetRecord) => r.isDisciplineViolation === true;
+
   for (const r of bets) {
-    if (r.isDisciplineViolation) violations++;
+    const v = isViolated(r);
+    const bkt = v ? viol : disc;
+    if (v) violations++;
     totalBet += r.bets.reduce((s, b) => s + b.amount, 0);
+    bkt.count++;
     if (r.result) {
       settledCount++;
+      bkt.settled++;
       const outcome = r.result.outcome;
       const ratio = effRatio(outcome);
-      effectiveBet += r.bets.reduce((s, b) => s + b.amount * ratio, 0);
-      totalPnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, outcome), 0);
-      if (outcome === "win") wins++;
-      else if (outcome === "half_win") halfWins++;
-      else if (outcome === "push") pushes++;
+      const effBet = r.bets.reduce((s, b) => s + b.amount * ratio, 0);
+      const pnl = r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, outcome), 0);
+      effectiveBet += effBet;
+      totalPnl += pnl;
+      bkt.effectiveBet += effBet;
+      bkt.totalPnl += pnl;
+      if (outcome === "win") { wins++; bkt.wins++; }
+      else if (outcome === "half_win") { halfWins++; bkt.halfWins++; }
+      else if (outcome === "push") { pushes++; bkt.pushes++; }
+      else if (outcome === "half_loss") { halfLosses++; }
+      else if (outcome === "loss") { losses++; }
     }
   }
   // 盘面胜率：分母去掉 push；半赢算 0.5 胜，半输算 0 胜
@@ -1005,9 +1031,39 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
     if (r.result.outcome === "win" || r.result.outcome === "half_win") promotedWins++;
   }
 
+  const bucketWinRate = (b: ReturnType<typeof bucket>) => {
+    const nonPush = b.settled - b.pushes;
+    return nonPush > 0 ? ((b.wins + b.halfWins * 0.5) / nonPush) * 100 : 0;
+  };
+  const bucketRoi = (b: ReturnType<typeof bucket>) =>
+    b.effectiveBet > 0 ? (b.totalPnl / b.effectiveBet) * 100 : 0;
+
   return {
     winRate,
     settledCount,
+    outcomeBreakdown: {
+      win: wins,
+      halfWin: halfWins,
+      push: pushes,
+      halfLoss: halfLosses,
+      loss: losses,
+    },
+    disciplineCompare: {
+      disciplined: {
+        count: disc.count,
+        settled: disc.settled,
+        winRate: bucketWinRate(disc),
+        roi: bucketRoi(disc),
+        totalPnl: disc.totalPnl,
+      },
+      violated: {
+        count: viol.count,
+        settled: viol.settled,
+        winRate: bucketWinRate(viol),
+        roi: bucketRoi(viol),
+        totalPnl: viol.totalPnl,
+      },
+    },
     totalPnl,
     totalBet,
     effectiveBet,
@@ -1170,4 +1226,20 @@ export function promoteWatchToBet(watchId: string, newBet: BetRecord): void {
     save(KEYS.ABANDONED_RECORDS, updated);
   }
   saveBetRecord({ ...newBet, convertedFromWatchId: watchId });
+}
+
+/**
+ * 观察→下注 后复盘时，若源观察已有赛果比分，复制到新下注（outcome 仍留空
+ * 让用户亲自确认）。review 页在编辑此类 bet 且尚未填比分时自动调用。
+ */
+export function syncScoreFromSourceWatch(bet: BetRecord): BetRecord {
+  if (!bet.convertedFromWatchId) return bet;
+  if (bet.result?.finalScore) return bet;
+  const w = getAbandonedRecords().find((r) => r.id === bet.convertedFromWatchId);
+  if (!w?.finalScore) return bet;
+  // 只补比分，不动 outcome/errors 等
+  if (bet.result) {
+    return { ...bet, result: { ...bet.result, finalScore: w.finalScore } };
+  }
+  return bet; // 没 result 对象时不强造 outcome 空壳，由 review UI 单独读 finalScore 预填
 }
