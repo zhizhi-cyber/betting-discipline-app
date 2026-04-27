@@ -1,6 +1,17 @@
 // ─── Input parsing & money formatting helpers ────────────────────────────────
 // Centralized here so review / abandoned / records pages all validate identically.
 
+/**
+ * 生成短稳定 id（前缀 + 时间戳 base36 + 6 位随机 base36）。
+ * 替代 `prefix-${Date.now()}` —— 同毫秒内两次保存就会产生同 id，导致
+ * "点击编辑跳错记录"等怪 bug；加随机后缀可避免碰撞。
+ */
+export function genId(prefix: string): string {
+  const t = Date.now().toString(36);
+  const r = Math.random().toString(36).slice(2, 8).padEnd(6, "0");
+  return `${prefix}-${t}-${r}`;
+}
+
 export interface ParseResult<T> {
   ok: boolean;
   value: T;
@@ -48,8 +59,8 @@ export function parseOddsInput(raw: string): ParseResult<number> {
  * 短格式金额显示，用于日历格、小空间等。
  * 例：
  *   1234    → "+1.2k"
- *   25000   → "+2.5万"
- *   250000  → "+25万"
+ *   25000   → "+25k"
+ *   250000  → "+250k"
  *   -4264   → "-4.3k"（注意用 ASCII 负号，避免字体里渲染成长破折号）
  * 负号统一使用 U+2212 MINUS SIGN，避免 CJK 字体把 U+002D 渲染成宽破折号。
  */
@@ -58,15 +69,11 @@ export function formatMoneyShort(n: number, opts: { withSign?: boolean } = {}): 
   if (n === 0) return "0";
   const abs = Math.abs(n);
   const sign = n < 0 ? "\u2212" : (withSign ? "+" : "");
-  if (abs >= 10000) {
-    const wan = abs / 10000;
-    // 1 位小数，省掉多余 ".0"
-    const s = wan >= 100 ? wan.toFixed(0) : wan.toFixed(1).replace(/\.0$/, "");
-    return `${sign}${s}万`;
-  }
+  // 全站统一使用 k 单位（不再使用"万"）
   if (abs >= 1000) {
     const k = abs / 1000;
-    const s = k.toFixed(1).replace(/\.0$/, "");
+    // ≥10k 不显示小数；<10k 一位小数，去掉多余 ".0"
+    const s = k >= 10 ? k.toFixed(0) : k.toFixed(1).replace(/\.0$/, "");
     return `${sign}${s}k`;
   }
   return `${sign}${Math.round(abs)}`;

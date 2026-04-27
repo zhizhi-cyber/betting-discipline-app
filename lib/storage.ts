@@ -7,7 +7,24 @@ import type {
   HandicapValue,
   BettingDirection,
 } from "./types";
-import { calcPnl, matchDayStart, matchDayKey, parseKickoff, errorWeightOf, type AppSettings } from "./types";
+import { calcPnl, matchDayStart, matchDayKey, parseKickoff, errorWeightOf, normalizeSided, type AppSettings } from "./types";
+
+// 把任意来源的记录里 `deduction.fairRanges/...` 归一化成新 `sides[]` 形态。
+// 旧记录可能是 `{side, values}` 或缺字段，统一一次后再喂给 UI 与统计。
+function migrateDeduction<T extends { deduction?: HandicapDeduction }>(rec: T): T {
+  const d = rec.deduction as unknown;
+  if (!d || typeof d !== "object") return rec;
+  const dd = d as HandicapDeduction & { fairRanges?: unknown; homeWinBookieExpected?: unknown; awayWinBookieExpected?: unknown };
+  return {
+    ...rec,
+    deduction: {
+      ...(dd as HandicapDeduction),
+      fairRanges: normalizeSided(dd.fairRanges),
+      homeWinBookieExpected: normalizeSided(dd.homeWinBookieExpected),
+      awayWinBookieExpected: normalizeSided(dd.awayWinBookieExpected),
+    },
+  };
+}
 export type { AppSettings } from "./types";
 
 // ─── Keys ─────────────────────────────────────────────────────────────────────
@@ -127,7 +144,7 @@ export function importAllData(
 // ─── Bet Records ──────────────────────────────────────────────────────────────
 
 export function getBetRecords(): BetRecord[] {
-  return load<BetRecord[]>(KEYS.BET_RECORDS, []);
+  return load<BetRecord[]>(KEYS.BET_RECORDS, []).map(migrateDeduction);
 }
 
 export function saveBetRecord(record: BetRecord): void {
@@ -149,7 +166,7 @@ export function deleteBetRecord(id: string): void {
 // ─── Abandoned Records ────────────────────────────────────────────────────────
 
 export function getAbandonedRecords(): AbandonedRecord[] {
-  return load<AbandonedRecord[]>(KEYS.ABANDONED_RECORDS, []);
+  return load<AbandonedRecord[]>(KEYS.ABANDONED_RECORDS, []).map(migrateDeduction);
 }
 
 export function saveAbandonedRecord(record: AbandonedRecord): void {
@@ -672,11 +689,14 @@ export interface GradeWinRate {
 }
 
 export function calcGradeWinRates(bets: BetRecord[]): GradeWinRate[] {
-  const result: Record<string, { wins: number; sample: number; total: number }> = {
-    S: { wins: 0, sample: 0, total: 0 },
-    A: { wins: 0, sample: 0, total: 0 },
-    B: { wins: 0, sample: 0, total: 0 },
-    C: { wins: 0, sample: 0, total: 0 },
+  // 新口径：半赢/半输各算 0.5 场
+  // 分子 = W + HW×0.5；分母 = W + L + (HW+HL)×0.5
+  type B = { w: number; hw: number; l: number; hl: number; total: number };
+  const result: Record<string, B> = {
+    S: { w: 0, hw: 0, l: 0, hl: 0, total: 0 },
+    A: { w: 0, hw: 0, l: 0, hl: 0, total: 0 },
+    B: { w: 0, hw: 0, l: 0, hl: 0, total: 0 },
+    C: { w: 0, hw: 0, l: 0, hl: 0, total: 0 },
   };
   for (const r of bets) {
     if (!r.result) continue;
@@ -684,19 +704,22 @@ export function calcGradeWinRates(bets: BetRecord[]): GradeWinRate[] {
     if (!bucket) continue;
     bucket.total++;
     const o = r.result.outcome;
-    if (o === "push") continue;
-    bucket.sample++;
-    if (o === "win") bucket.wins += 1;
-    else if (o === "half_win") bucket.wins += 0.5;
-    else if (o === "half_loss") bucket.wins += 0; // treat as partial loss = 0
+    if (o === "win") bucket.w++;
+    else if (o === "half_win") bucket.hw++;
+    else if (o === "loss") bucket.l++;
+    else if (o === "half_loss") bucket.hl++;
+    // push 不计
   }
   const order: ("S" | "A" | "B" | "C")[] = ["S", "A", "B", "C"];
   return order.map((g) => {
     const b = result[g];
+    const num = b.w + b.hw * 0.5;
+    const den = b.w + b.l + (b.hw + b.hl) * 0.5;
+    // sample（场次）按"半赢/半输各 0.5 场"换算成有效场次（与分母同口径）
     return {
       grade: g,
-      rate: b.sample > 0 ? (b.wins / b.sample) * 100 : NaN,
-      sample: b.sample,
+      rate: den > 0 ? (num / den) * 100 : NaN,
+      sample: den,
       total: b.total,
     };
   });
@@ -767,7 +790,8 @@ export function resetAllData(): void {
 // Scoped analytics for a given bet+watch list (already filtered by time range).
 
 export interface RecordsAnalytics {
-  // 盘面胜率：剔除走盘（push）后的胜率；半赢 = 0.5 胜、半输 = 0 胜。
+  // 盘面胜率：半赢/半输各算 0.5 场。
+  // 分子 = W + HW×0.5；分母 = W + L + (HW+HL)×0.5；走盘（push）不计入。
   // 分母 = 已结算场次 − 走盘场次。避免让整数让球"走盘是盘口必然"的结构被算作拖后腿。
   winRate: number;
   settledCount: number;
@@ -834,7 +858,7 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
   let violations = 0;
 
   // 按纪律 / 违纪 两桶分别累积
-  const bucket = () => ({ count: 0, settled: 0, wins: 0, halfWins: 0, pushes: 0, effectiveBet: 0, totalPnl: 0, totalPnlRaw: 0 });
+  const bucket = () => ({ count: 0, settled: 0, wins: 0, halfWins: 0, losses: 0, halfLosses: 0, pushes: 0, effectiveBet: 0, totalPnl: 0, totalPnlRaw: 0 });
   const disc = bucket();
   const viol = bucket();
 
@@ -860,23 +884,30 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
       if (outcome === "win") { wins++; bkt.wins++; }
       else if (outcome === "half_win") { halfWins++; bkt.halfWins++; }
       else if (outcome === "push") { pushes++; bkt.pushes++; }
-      else if (outcome === "half_loss") { halfLosses++; }
-      else if (outcome === "loss") { losses++; }
+      else if (outcome === "half_loss") { halfLosses++; bkt.halfLosses++; }
+      else if (outcome === "loss") { losses++; bkt.losses++; }
     }
   }
-  // 盘面胜率：分母去掉 push；半赢算 0.5 胜，半输算 0 胜
-  const settledNonPush = settledCount - pushes;
-  const winRate = settledNonPush > 0
-    ? ((wins + halfWins * 0.5) / settledNonPush) * 100
-    : 0;
+  // 盘面胜率：半赢/半输各算 0.5 场。
+  // 分子 = W + HW×0.5；分母 = W + L + (HW + HL)×0.5；push 不计。
+  const winNum = wins + halfWins * 0.5;
+  const winDen = wins + losses + (halfWins + halfLosses) * 0.5;
+  const winRate = winDen > 0 ? (winNum / winDen) * 100 : 0;
   // ROI 基于有效投注（更反映让球盘真实回报率）
   const roi = effectiveBet > 0 ? (totalPnl / effectiveBet) * 100 : 0;
   const disciplineScore = bets.length > 0 ? ((bets.length - violations) / bets.length) * 100 : 100;
 
-  // Streak (latest consecutive win/loss across settled bets by kickoff time desc)
+  // Streak (latest consecutive win/loss across settled bets by bet time desc)
+  // 用下注时间排序，更贴近"按下注顺序"的连赢/连亏体感（fallback 到 kickoffTime / createdAt）。
+  const streakSortKey = (r: BetRecord): number => {
+    const bt = r.bets[0]?.betTime;
+    if (bt) return new Date(bt).getTime();
+    if (r.createdAt) return new Date(r.createdAt).getTime();
+    return parseKickoff(r.kickoffTime).getTime();
+  };
   const settled = [...bets]
     .filter((r) => !!r.result)
-    .sort((a, b) => parseKickoff(b.kickoffTime).getTime() - parseKickoff(a.kickoffTime).getTime());
+    .sort((a, b) => streakSortKey(b) - streakSortKey(a));
   let streak: RecordsAnalytics["streak"] = { type: "none", count: 0 };
   if (settled.length > 0) {
     const first = settled[0].result!.outcome;
@@ -911,10 +942,10 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
     cur.bet += amt; cur.pnl += pnl; cur.count += 1;
     hcMap.set(label, cur);
   }
+  // 全部已下注盘口（默认 UI 只显示前 5，"展开"按钮显示其余）
   const handicapRoi = Array.from(hcMap.entries())
     .map(([label, v]) => ({ label, ...v, roi: v.bet > 0 ? (v.pnl / v.bet) * 100 : 0 }))
-    .sort((a, b) => b.bet - a.bet)
-    .slice(0, 5);
+    .sort((a, b) => b.bet - a.bet);
 
   // Error top — 加权排序（weight × count），权重来自 ERROR_WEIGHTS
   const errMap = new Map<string, number>();
@@ -962,8 +993,8 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
   const avgLeadMinutes = leadN > 0 ? leadSum / leadN : null;
 
   // 赛前时长分桶：early >4h / near 1-4h / last <1h
-  type LB = { count: number; settled: number; wins: number; halfWins: number; push: number; effBet: number; pnl: number };
-  const mk = (): LB => ({ count: 0, settled: 0, wins: 0, halfWins: 0, push: 0, effBet: 0, pnl: 0 });
+  type LB = { count: number; settled: number; wins: number; halfWins: number; losses: number; halfLosses: number; push: number; effBet: number; pnl: number };
+  const mk = (): LB => ({ count: 0, settled: 0, wins: 0, halfWins: 0, losses: 0, halfLosses: 0, push: 0, effBet: 0, pnl: 0 });
   const lb = { early: mk(), near: mk(), last: mk() };
   for (const r of bets) {
     const bt = r.bets[0]?.betTime;
@@ -980,15 +1011,18 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
       bucket.pnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, o), 0);
       if (o === "win") bucket.wins++;
       else if (o === "half_win") bucket.halfWins++;
+      else if (o === "loss") bucket.losses++;
+      else if (o === "half_loss") bucket.halfLosses++;
       else if (o === "push") bucket.push++;
     }
   }
   const finalizeBucket = (b: LB) => {
-    const nonPush = b.settled - b.push;
+    const num = b.wins + b.halfWins * 0.5;
+    const den = b.wins + b.losses + (b.halfWins + b.halfLosses) * 0.5;
     return {
       count: b.count,
       settled: b.settled,
-      winRate: nonPush > 0 ? ((b.wins + b.halfWins * 0.5) / nonPush) * 100 : 0,
+      winRate: den > 0 ? (num / den) * 100 : 0,
       roi: b.effBet > 0 ? (b.pnl / b.effBet) * 100 : 0,
     };
   };
@@ -999,7 +1033,7 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
   };
 
   // 深夜单统计（00:00-06:00 根据 betTime）
-  let lnCount = 0, lnSettled = 0, lnWins = 0, lnHalfWins = 0, lnPush = 0;
+  let lnCount = 0, lnSettled = 0, lnWins = 0, lnHalfWins = 0, lnLosses = 0, lnHalfLosses = 0;
   let lnEffBet = 0, lnPnl = 0;
   for (const r of bets) {
     const bt = r.bets[0]?.betTime;
@@ -1015,11 +1049,14 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
       lnPnl += r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, o), 0);
       if (o === "win") lnWins++;
       else if (o === "half_win") lnHalfWins++;
-      else if (o === "push") lnPush++;
+      else if (o === "loss") lnLosses++;
+      else if (o === "half_loss") lnHalfLosses++;
+      // push 不计
     }
   }
-  const lnNonPush = lnSettled - lnPush;
-  const lnWinRate = lnNonPush > 0 ? ((lnWins + lnHalfWins * 0.5) / lnNonPush) * 100 : 0;
+  const lnNum = lnWins + lnHalfWins * 0.5;
+  const lnDen = lnWins + lnLosses + (lnHalfWins + lnHalfLosses) * 0.5;
+  const lnWinRate = lnDen > 0 ? (lnNum / lnDen) * 100 : 0;
   const lnRoi = lnEffBet > 0 ? (lnPnl / lnEffBet) * 100 : 0;
 
   const promotedIds = new Set(watches.filter((w) => w.promotedToBetId).map((w) => w.promotedToBetId!));
@@ -1032,8 +1069,9 @@ export function calcRecordsAnalytics(bets: BetRecord[], watches: AbandonedRecord
   }
 
   const bucketWinRate = (b: ReturnType<typeof bucket>) => {
-    const nonPush = b.settled - b.pushes;
-    return nonPush > 0 ? ((b.wins + b.halfWins * 0.5) / nonPush) * 100 : 0;
+    const num = b.wins + b.halfWins * 0.5;
+    const den = b.wins + b.losses + (b.halfWins + b.halfLosses) * 0.5;
+    return den > 0 ? (num / den) * 100 : 0;
   };
   const bucketRoi = (b: ReturnType<typeof bucket>) =>
     b.effectiveBet > 0 ? (b.totalPnl / b.effectiveBet) * 100 : 0;
@@ -1169,7 +1207,10 @@ export interface ScreeningItem {
 }
 
 export function getScreeningPool(): ScreeningItem[] {
-  return load<ScreeningItem[]>(KEYS.SCREENING_POOL, []);
+  return load<ScreeningItem[]>(KEYS.SCREENING_POOL, []).map((it) => {
+    if (!it.deduction) return it;
+    return migrateDeduction(it as ScreeningItem & { deduction: HandicapDeduction });
+  });
 }
 
 export function saveScreeningItem(item: ScreeningItem): void {

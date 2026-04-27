@@ -7,7 +7,7 @@ import { ArrowLeft, ChevronDown, ChevronUp, Trash2, Star, Pencil } from "lucide-
 import type { ReviewConclusion, AbandonedRecord, AnalysisVerdict, ScoreData, BetRecord, SidedHandicap } from "@/lib/types";
 import { SUBDIMS, formatBetPreview, formatSidedHandicap, parseKickoff, gradeFromScore, isHardStopped, isSemiHardStopped } from "@/lib/types";
 import { getAbandonedRecords, saveAbandonedRecord, deleteAbandonedRecord, promoteWatchToBet, getSettings, countToday, calcLockState, formatLockMessage } from "@/lib/storage";
-import { parseAmount, parseOddsInput } from "@/lib/format";
+import { parseAmount, parseOddsInput, genId } from "@/lib/format";
 import BottomNav from "@/components/bottom-nav";
 import { useToast } from "@/components/toast";
 
@@ -131,7 +131,7 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
     if (!oddsRes.ok) { showToast(oddsRes.error || "水位无效", "error"); return; }
     const amount = amt.value;
     const odds = oddsRes.value;
-    const newBetId = `b-${Date.now()}`;
+    const newBetId = genId("b");
     // 按原评分重算等级（原来硬编码 C 的 bug）
     const hard = isHardStopped(record.scores);
     const semiHard = isSemiHardStopped(record.scores);
@@ -151,7 +151,7 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
       scores: record.scores,
       deduction: record.deduction,
       bets: [{
-        id: `bs-${Date.now()}`,
+        id: genId("bs"),
         type: "pre",
         handicapSide: record.handicapSide,
         handicapValue: record.handicapValue,

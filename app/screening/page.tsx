@@ -60,17 +60,25 @@ function SidedHandicapPicker({
   };
 
   const preview = formatSidedHandicap(data, homeTeam, awayTeam);
-  const hasSide = !!data.side;
+  const hasSide = data.sides.length > 0;
   const hasValues = data.values.length > 0;
+
+  const toggleSide = (s: "home" | "away") => {
+    const sel = data.sides.includes(s);
+    onChange({
+      ...data,
+      sides: sel ? data.sides.filter((x) => x !== s) : [...data.sides, s],
+    });
+  };
 
   return (
     <>
       <div className="grid grid-cols-2 gap-1.5 mb-1.5">
         {(["home", "away"] as const).map((s) => (
           <button key={s}
-            onClick={() => onChange({ ...data, side: s })}
+            onClick={() => toggleSide(s)}
             className={`py-1.5 px-2 rounded text-[11px] font-semibold min-w-0 flex flex-col items-center leading-tight ${
-              data.side === s ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
+              data.sides.includes(s) ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
             }`}
           >
             <span className="opacity-70 text-[10px]">{s === "home" ? "主让" : "客让"}</span>

@@ -11,7 +11,7 @@ import {
   getScreeningPool, saveScreeningItem,
   type LockState,
 } from "@/lib/storage";
-import { parseAmount, parseOddsInput } from "@/lib/format";
+import { parseAmount, parseOddsInput, genId } from "@/lib/format";
 import { useToast } from "@/components/toast";
 import type {
   HandicapValue,
@@ -89,17 +89,25 @@ function SidedHandicapPicker({
   };
 
   const preview = formatSidedHandicap(data, homeTeam, awayTeam);
-  const hasSide = !!data.side;
+  const hasSide = data.sides.length > 0;
   const hasValues = data.values.length > 0;
+
+  const toggleSide = (s: "home" | "away") => {
+    const sel = data.sides.includes(s);
+    onChange({
+      ...data,
+      sides: sel ? data.sides.filter((x) => x !== s) : [...data.sides, s],
+    });
+  };
 
   return (
     <>
       <div className="grid grid-cols-2 gap-1.5 mb-1.5">
         {(["home", "away"] as const).map((s) => (
           <button key={s}
-            onClick={() => onChange({ ...data, side: s })}
+            onClick={() => toggleSide(s)}
             className={`py-1.5 px-2 rounded text-[11px] font-semibold min-w-0 flex flex-col items-center leading-tight ${
-              data.side === s ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
+              data.sides.includes(s) ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
             }`}
           >
             <span className="opacity-70 text-[10px]">{s === "home" ? "主让" : "客让"}</span>
@@ -523,7 +531,7 @@ function ReviewInner() {
       return;
     }
     const orig = editOriginalWatch;
-    const id = `b-${Date.now()}`;
+    const id = genId("b");
     const amt = parseAmount(confirmAmount);
     if (!amt.ok) { setConfirmAmountError(amt.error || "金额无效"); return; }
     const amount = amt.value;
@@ -545,7 +553,7 @@ function ReviewInner() {
       scores,
       deduction,
       bets: [{
-        id: `bs-${Date.now()}`,
+        id: genId("bs"),
         type: betType,
         handicapSide: handicapSide || orig.handicapSide,
         handicapValue: handicapValue || orig.handicapValue,
@@ -566,7 +574,7 @@ function ReviewInner() {
   };
 
   const handleSaveBet = () => {
-    const id = `b-${Date.now()}`;
+    const id = genId("b");
     const amt = parseAmount(confirmAmount);
     if (!amt.ok) { setConfirmAmountError(amt.error || "金额无效"); return; }
     const amount = amt.value;
@@ -606,7 +614,7 @@ function ReviewInner() {
       closeHandicap: closeHandicap || undefined,
       closeOdds: closeOdds && !isNaN(parseFloat(closeOdds)) ? parseFloat(closeOdds) : undefined,
       bets: [{
-        id: `bs-${Date.now()}`,
+        id: genId("bs"),
         type: betType,
         handicapSide: handicapSide || "home",
         handicapValue,
@@ -727,7 +735,7 @@ function ReviewInner() {
         firstBet
           ? { ...firstBet, type: betType, handicapSide: handicapSide || firstBet.handicapSide,
               handicapValue: handicapValue || firstBet.handicapValue, odds: finalOdds, amount }
-          : { id: `bs-${Date.now()}`, type: betType, handicapSide: handicapSide || "home",
+          : { id: genId("bs"), type: betType, handicapSide: handicapSide || "home",
               handicapValue: handicapValue || "0", odds: finalOdds, amount, betTime: new Date().toISOString() },
         ...orig.bets.slice(1),
       ],

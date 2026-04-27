@@ -80,6 +80,8 @@ export default function PnlBars({
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
   const [cumVisible, setCumVisible] = useState(showCumulative);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // 可见区间（用于 Y 轴自适应）：[startIdx, endIdx]，默认全部
+  const [visRange, setVisRange] = useState<[number, number] | null>(null);
   const gradId = useMemo(() => `cum-grad-${Math.random().toString(36).slice(2, 9)}`, []);
 
   // Auto-detect granularity: if consecutive keys are ≥6 days apart → week
@@ -100,15 +102,34 @@ export default function PnlBars({
     });
   }, [data]);
 
+  // 可见区间切片：滑动后 Y 轴只看当前露出的 bar（像股票 K 线那样）
+  const visSlice = useMemo(() => {
+    if (!visRange) return data;
+    const [s, e] = visRange;
+    const lo = Math.max(0, Math.min(data.length, s));
+    const hi = Math.max(lo, Math.min(data.length, e + 1));
+    if (hi - lo <= 0) return data;
+    return data.slice(lo, hi);
+  }, [data, visRange]);
+  const visCum = useMemo(() => {
+    if (!visRange) return cumulative;
+    const [s, e] = visRange;
+    const lo = Math.max(0, Math.min(cumulative.length, s));
+    const hi = Math.max(lo, Math.min(cumulative.length, e + 1));
+    if (hi - lo <= 0) return cumulative;
+    return cumulative.slice(lo, hi);
+  }, [cumulative, visRange]);
+
   // 用"温和封顶"(winsorize)处理异常大值：一笔 10 万不应把其它几百几千的柱子拍成看不见。
   // 策略：Y 轴上限取第 90 分位数绝对值的 1.2 倍（至少保持 1 和原最大值的下限）；
   // 超过该上限的柱子会被截顶，并用三角箭头标记。
+  // 现在以"可见切片"为输入 → 滑动 K 线时 Y 轴自适应当前窗口。
   const { maxAbsPnl, pnlCap, absMaxPnlRaw } = useMemo(() => {
-    const abs = data.map((d) => Math.abs(d.pnl)).filter((v) => v > 0).sort((a, b) => a - b);
+    const abs = visSlice.map((d) => Math.abs(d.pnl)).filter((v) => v > 0).sort((a, b) => a - b);
     const rawMax = abs.length > 0 ? abs[abs.length - 1] : 1;
     if (abs.length < 5) {
-      // 样本少，直接用最大值
-      return { maxAbsPnl: Math.max(1, rawMax), pnlCap: Infinity, absMaxPnlRaw: rawMax };
+      // 样本少，直接用最大值（再加 10% padding，避免顶到天花板）
+      return { maxAbsPnl: Math.max(1, rawMax * 1.1), pnlCap: Infinity, absMaxPnlRaw: rawMax };
     }
     // 90 分位
     const p90 = abs[Math.floor(abs.length * 0.9)];
@@ -116,12 +137,47 @@ export default function PnlBars({
     // 封顶不能小于次大值，否则截太狠；同时不允许小于最大值的 40%
     const finalCap = Math.max(cap, rawMax * 0.4);
     return { maxAbsPnl: finalCap, pnlCap: finalCap, absMaxPnlRaw: rawMax };
-  }, [data]);
+  }, [visSlice]);
   const maxAbsCum = useMemo(
-    () => Math.max(1, ...cumulative.map((v) => Math.abs(v))),
-    [cumulative]
+    () => Math.max(1, ...visCum.map((v) => Math.abs(v))) * 1.1,
+    [visCum]
   );
   const hasClippedBar = isFinite(pnlCap) && absMaxPnlRaw > pnlCap;
+
+  // 滚动 / 缩放 → 更新可见 bar 索引，让 Y 轴跟随当前窗口缩放（股票 K 线行为）
+  useEffect(() => {
+    if (!zoomable) {
+      // 非滚动模式：永远显示全量
+      setVisRange(null);
+      return;
+    }
+    const el = scrollRef.current;
+    if (!el || data.length === 0) return;
+    const baseInnerW = 320;
+    const innerW = baseInnerW * zoom;
+    const padLeft = 34;
+    const bandW = innerW / data.length;
+    const update = () => {
+      const sl = el.scrollLeft;
+      const cw = el.clientWidth;
+      // 视口在 SVG x 域内的左右边界（SVG width === totalW px → 1:1 映射）
+      const xL = sl;
+      const xR = sl + cw;
+      // bar i 中心 cx = padLeft + bandW*(i+0.5)；落在 [xL, xR] 视为可见
+      const startIdx = Math.max(0, Math.floor((xL - padLeft) / bandW));
+      const endIdx = Math.min(data.length - 1, Math.ceil((xR - padLeft) / bandW));
+      if (endIdx < startIdx) return;
+      setVisRange([startIdx, endIdx]);
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
+    ro?.observe(el);
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro?.disconnect();
+    };
+  }, [zoomable, zoom, data.length]);
 
   // Pinch-zoom on touch
   useEffect(() => {

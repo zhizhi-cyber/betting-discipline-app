@@ -21,6 +21,7 @@ export default function AnalyticsPanel({
   watches: AbandonedRecord[];
 }) {
   const [disciplineOpen, setDisciplineOpen] = useState(false);
+  const [showAllHcp, setShowAllHcp] = useState(false);
   if (bets.length === 0 && watches.length === 0) return null;
 
   const a = calcRecordsAnalytics(bets, watches);
@@ -111,7 +112,7 @@ export default function AnalyticsPanel({
                     {hasSample ? `${g.rate.toFixed(0)}%` : "—"}
                   </p>
                   <p className="text-[9px] text-muted-foreground/70 font-mono mt-0.5">
-                    {hasSample ? `${g.sample}场` : "无样本"}
+                    {hasSample ? `${g.sample % 1 === 0 ? g.sample : g.sample.toFixed(1)}场` : "无样本"}
                   </p>
                 </div>
               );
@@ -127,24 +128,35 @@ export default function AnalyticsPanel({
           {a.handicapRoi.length > 0 && (
             <GlassCard title="盘口 ROI" icon={<Target size={10} strokeWidth={2} />}>
               <div className="space-y-1.5">
-                {a.handicapRoi.slice(0, 3).map((h) => {
+                {(() => {
+                  const visible = showAllHcp ? a.handicapRoi : a.handicapRoi.slice(0, 5);
                   const max = Math.max(...a.handicapRoi.map((x) => Math.abs(x.roi)), 1);
-                  const width = Math.min(100, (Math.abs(h.roi) / max) * 100);
-                  const color = h.roi >= 0 ? "bg-profit" : "bg-loss";
-                  return (
-                    <div key={h.label} className="space-y-0.5">
-                      <div className="flex items-center justify-between text-[10px]">
-                        <span className="font-mono text-foreground/80">{h.label}</span>
-                        <span className={`font-mono tabular-nums font-semibold ${h.roi >= 0 ? "text-profit" : "text-loss"}`}>
-                          {h.roi >= 0 ? "+" : ""}{h.roi.toFixed(0)}%
-                        </span>
+                  return visible.map((h) => {
+                    const width = Math.min(100, (Math.abs(h.roi) / max) * 100);
+                    const color = h.roi >= 0 ? "bg-profit" : "bg-loss";
+                    return (
+                      <div key={h.label} className="space-y-0.5">
+                        <div className="flex items-center justify-between text-[10px]">
+                          <span className="font-mono text-foreground/80">{h.label}</span>
+                          <span className={`font-mono tabular-nums font-semibold ${h.roi >= 0 ? "text-profit" : "text-loss"}`}>
+                            {h.roi >= 0 ? "+" : ""}{h.roi.toFixed(0)}%
+                          </span>
+                        </div>
+                        <div className="h-1 rounded-full bg-muted overflow-hidden">
+                          <div className={`h-full ${color} rounded-full`} style={{ width: `${width}%` }} />
+                        </div>
                       </div>
-                      <div className="h-1 rounded-full bg-muted overflow-hidden">
-                        <div className={`h-full ${color} rounded-full`} style={{ width: `${width}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  });
+                })()}
+                {a.handicapRoi.length > 5 && (
+                  <button
+                    onClick={() => setShowAllHcp((v) => !v)}
+                    className="text-[10px] text-muted-foreground/80 hover:text-foreground transition-colors mt-1"
+                  >
+                    {showAllHcp ? "收起" : `展开全部 ${a.handicapRoi.length} 个盘口`}
+                  </button>
+                )}
               </div>
             </GlassCard>
           )}

@@ -137,7 +137,9 @@ export type HandicapValue =
 export type HandicapConfidence = 1 | 2 | 3 | 4 | 5 | 0;
 
 export interface SidedHandicap {
-  side: "home" | "away" | "";
+  // 让球方支持多选：例如盘口推演时合理区间可同时是"主让 0.5"和"客让 0.25"。
+  // 旧数据存的是单 `side`；读取时由 storage 层迁移为 `sides`（见 normalizeSided）。
+  sides: ("home" | "away")[];
   values: HandicapValue[];
 }
 
@@ -442,21 +444,41 @@ export function formatSidedHandicap(
   homeTeam: string,
   awayTeam: string,
 ): string {
-  if (!sided.side || sided.values.length === 0) return "";
-  // sided.side = 让球方（给出让球的那一方 / 强队视角）
-  // 按亚盘惯例，让球方显示负号：例如主让 0.75 → "主队 -0.75"
-  const team = sided.side === "home" ? (homeTeam || "主队") : (awayTeam || "客队");
-  const parts = sided.values.map((v) => {
+  if (sided.sides.length === 0 || sided.values.length === 0) return "";
+  // 让球方（给出让球的那一方 / 强队视角）。多选时以 " · " 分组：
+  //   "主队 -0.5 / -0.75 · 客队 -0.25"
+  const valueParts = sided.values.map((v) => {
     const n = parseFloat(v);
     if (isNaN(n) || n === 0) return "0";
     return `-${v}`;
   });
-  return `${team} ${parts.join(" / ")}`;
+  const groups = sided.sides.map((s) => {
+    const team = s === "home" ? (homeTeam || "主队") : (awayTeam || "客队");
+    return `${team} ${valueParts.join(" / ")}`;
+  });
+  return groups.join(" · ");
 }
 
-// Whether a SidedHandicap has both a side and at least one value selected.
+// Whether at least one side and one value are selected.
 export function isSidedHandicapComplete(sided: SidedHandicap): boolean {
-  return !!sided.side && sided.values.length > 0;
+  return sided.sides.length > 0 && sided.values.length > 0;
+}
+
+// 读取旧记录时把 `{side, values}` 归一化成 `{sides, values}`。
+export function normalizeSided(raw: unknown): SidedHandicap {
+  if (!raw || typeof raw !== "object") return { sides: [], values: [] };
+  const r = raw as { side?: unknown; sides?: unknown; values?: unknown };
+  const values = Array.isArray(r.values) ? (r.values as HandicapValue[]) : [];
+  if (Array.isArray(r.sides)) {
+    const sides = (r.sides as unknown[]).filter(
+      (s): s is "home" | "away" => s === "home" || s === "away",
+    );
+    return { sides, values };
+  }
+  if (r.side === "home" || r.side === "away") {
+    return { sides: [r.side], values };
+  }
+  return { sides: [], values };
 }
 
 // ─── Review option constants (post-match feedback) ────────────────────────────
@@ -643,9 +665,9 @@ export function emptyScoreData(): ScoreData {
 
 export function emptyDeduction(): HandicapDeduction {
   return {
-    fairRanges: { side: "", values: [] },
-    homeWinBookieExpected: { side: "", values: [] },
-    awayWinBookieExpected: { side: "", values: [] },
+    fairRanges: { sides: [], values: [] },
+    homeWinBookieExpected: { sides: [], values: [] },
+    awayWinBookieExpected: { sides: [], values: [] },
     confidence: 0,
     suspectedTrap: false,
     personalAnalysis: "",
@@ -733,21 +755,27 @@ export function formatMatchDayLabel(dayKey: string): string {
   return dt.toLocaleDateString("zh-CN", { month: "long", day: "numeric", weekday: "short" });
 }
 
-// ISO week start (Monday). Returns Date set to 00:00 on Monday of that week.
+// Week start = Monday 10:00 (aligned with match-day boundary).
+// Sunday 23:00 → previous Monday 10:00 of same week.
+// Monday 09:00 → previous Monday 10:00 (still belongs to last week's match-day cycle).
+// Monday 10:00 onwards → that Monday 10:00.
 export function weekStart(date: Date): Date {
   const d = new Date(date);
-  d.setHours(0, 0, 0, 0);
-  const day = d.getDay(); // 0=Sun, 1=Mon...
+  // First, anchor to the match-day this date belongs to (10:00 boundary).
+  const md = matchDayStart(d);
+  // Now md is at HH=10:00 local. Walk back to Monday.
+  const day = md.getDay(); // 0=Sun, 1=Mon...
   const diff = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diff);
-  return d;
+  md.setDate(md.getDate() + diff);
+  return md;
 }
 
 export function weekEnd(date: Date): Date {
   const s = weekStart(date);
+  // [s, s+7d) — exclusive end set to next Monday 10:00 minus 1ms.
   const e = new Date(s);
-  e.setDate(e.getDate() + 6);
-  e.setHours(23, 59, 59, 999);
+  e.setDate(e.getDate() + 7);
+  e.setMilliseconds(e.getMilliseconds() - 1);
   return e;
 }
 
