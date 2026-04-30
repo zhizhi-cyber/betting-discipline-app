@@ -325,7 +325,7 @@ export function dailyBetLimitFor(date: Date = new Date(), settings?: AppSettings
 
 export interface LockState {
   locked: boolean;
-  reason: "daily_loss" | "monthly_drawdown" | "loss_streak_3" | "loss_streak_5" | null;
+  reason: "daily_loss" | "monthly_drawdown" | "loss_streak_3" | "loss_streak_5" | "loss_day_streak" | null;
   dailyPnl: number;
   monthlyPnl: number;
   dailyLossLimit: number;
@@ -336,6 +336,56 @@ export interface LockState {
   lossStreak?: number;
   /** 连败锁当前惩罚天数（仅奇数阈值触发；4/6/8 沿用上一阈值的天数） */
   lockDays?: number;
+  /** 连输天数（按 match-day 聚合），仅 reason="loss_day_streak" 时填 */
+  lossDayStreak?: number;
+}
+
+/**
+ * 计算"连输 N 天"streak（从今天 match-day 往前回溯）：
+ *  - 当日已结算且日净 PnL < 0 → 算 1 个连输天，streak +1
+ *  - 当日已结算且日净 PnL ≥ 0（盈利或持平） → 断
+ *  - 当日无任何已结算下注 → 跳过（不+1 也不断）
+ *
+ *  返回 { streak, triggerDayKey }；triggerDayKey = 最近一个亏损天的 matchDayKey
+ *  (用于决定锁起点)。streak 为 0 时 triggerDayKey 为空字符串。
+ */
+function calcLossDayStreak(now: Date, bets: BetRecord[]): { streak: number; triggerDayKey: string } {
+  // 聚合"已结算"日 PnL
+  const dayPnl = new Map<string, number>();
+  for (const r of bets) {
+    if (!r.result) continue;
+    const key = matchDayKey(r.kickoffTime);
+    const pnl = r.bets.reduce((s, b) => s + calcPnl(b.amount, b.odds, r.result!.outcome), 0);
+    dayPnl.set(key, (dayPnl.get(key) ?? 0) + pnl);
+  }
+  if (dayPnl.size === 0) return { streak: 0, triggerDayKey: "" };
+
+  const cursor = matchDayStart(now);
+  const cursorKey = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${dd}`;
+  };
+  let streak = 0;
+  let triggerDayKey = "";
+  // 最多回溯 60 天，避免极端情况死循环
+  for (let i = 0; i < 60; i++) {
+    const key = cursorKey(cursor);
+    if (dayPnl.has(key)) {
+      const p = dayPnl.get(key)!;
+      if (p < 0) {
+        streak++;
+        if (!triggerDayKey) triggerDayKey = key;
+      } else {
+        // 盈利或持平 → 断
+        break;
+      }
+    }
+    // 无下注 / 全部未结算 → 跳过
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return { streak, triggerDayKey };
 }
 
 export function calcLockState(now: Date = new Date(), settings?: AppSettings): LockState {
@@ -404,31 +454,69 @@ export function calcLockState(now: Date = new Date(), settings?: AppSettings): L
   //  锚点：触发该轮惩罚的那一场输球的 match-day（10:00）
   //  unlockAt = 触发场 match-day + (lockDays + 1) 天
   //    ⇒ 实际是"从次日起算 lockDays 天"
+  // 候选锁集合：先各自算出剩余封锁时间，最终取最严的一个生效
+  type Candidate = Pick<LockState, "reason" | "unlockAt" | "unlockLabel" | "lossStreak" | "lockDays" | "lossDayStreak">;
+  const candidates: Candidate[] = [];
+
+  // ─ 连输 N 天锁（match-day 聚合，N≥3 起每多 1 天再锁 1 天）─
+  const dayInfo = calcLossDayStreak(now, bets);
+  if (dayInfo.streak >= 3 && dayInfo.triggerDayKey) {
+    // triggerDayKey 是 yyyy-mm-dd，对应那天 10:00 是 match-day 起点
+    const [ty, tm, td] = dayInfo.triggerDayKey.split("-").map((x) => parseInt(x, 10));
+    const triggerStart = new Date(ty, tm - 1, td, 10, 0, 0, 0);
+    // 锁结束 = trigger match-day 结束 + 24h = trigger 起点 + 48h
+    //  即从触发日次日 10:00 起再封 1 整天，到第三天 10:00。
+    const unlock = new Date(triggerStart.getTime() + 48 * 60 * 60 * 1000);
+    if (unlock.getTime() > now.getTime()) {
+      candidates.push({
+        reason: "loss_day_streak",
+        lossDayStreak: dayInfo.streak,
+        unlockAt: unlock.toISOString(),
+        unlockLabel: `${unlock.getMonth() + 1}月${unlock.getDate()}日 10:00`,
+      });
+    }
+  }
+
   const streakLosses = calcLossStreakLosses(bets); // 最近连败列表（recent-first）
   const streak = streakLosses.length;
   if (streak >= 3) {
     // 最高不超过 streak 的奇数阈值
     const T = streak % 2 === 0 ? streak - 1 : streak;
     const lockDays = (T - 1) / 2;
-    // 触发那一场 = recent-first 里 index (streak - T)
-    const triggerIdx = streak - T; // 奇数 streak → 0 (最新)，偶数 streak → 1 (次新)
+    const triggerIdx = streak - T;
     const triggerBet = streakLosses[triggerIdx];
     const triggerTime = new Date(
       triggerBet.bets[0]?.betTime || triggerBet.createdAt
     );
-    const anchor = matchDayStart(triggerTime); // 触发场 match-day 10:00
+    const anchor = matchDayStart(triggerTime);
     anchor.setDate(anchor.getDate() + lockDays + 1);
     if (anchor.getTime() > now.getTime()) {
-      state.locked = true;
-      state.lossStreak = streak;
-      state.lockDays = lockDays;
-      state.unlockAt = anchor.toISOString();
-      state.unlockLabel = `${anchor.getMonth() + 1}月${anchor.getDate()}日 10:00`;
-      state.reason = streak >= 5 ? "loss_streak_5" : "loss_streak_3";
-      return state;
+      candidates.push({
+        reason: streak >= 5 ? "loss_streak_5" : "loss_streak_3",
+        lossStreak: streak,
+        lockDays,
+        unlockAt: anchor.toISOString(),
+        unlockLabel: `${anchor.getMonth() + 1}月${anchor.getDate()}日 10:00`,
+      });
     }
   }
 
+  // 多个候选锁取剩余封锁时间最长的一个（最严）
+  if (candidates.length > 0) {
+    candidates.sort((a, b) => {
+      const ta = a.unlockAt ? new Date(a.unlockAt).getTime() : 0;
+      const tb = b.unlockAt ? new Date(b.unlockAt).getTime() : 0;
+      return tb - ta;
+    });
+    const chosen = candidates[0];
+    state.locked = true;
+    state.reason = chosen.reason ?? null;
+    state.unlockAt = chosen.unlockAt;
+    state.unlockLabel = chosen.unlockLabel;
+    if (chosen.lossStreak !== undefined) state.lossStreak = chosen.lossStreak;
+    if (chosen.lockDays !== undefined) state.lockDays = chosen.lockDays;
+    if (chosen.lossDayStreak !== undefined) state.lossDayStreak = chosen.lossDayStreak;
+  }
   return state;
 }
 
@@ -507,6 +595,10 @@ export function formatLockMessage(lock: LockState): string {
       return (T - 1) / 2;
     })();
     return `连败 ${streak} 场，强制休息 ${days} 天（至 ${when}）`;
+  }
+  if (lock.reason === "loss_day_streak") {
+    const n = lock.lossDayStreak ?? 3;
+    return `连输 ${n} 天，强制休息至 ${when}（期间不得下注）`;
   }
   // daily_loss 现在强制休息一整天（锁到后天 10:00）
   return `今日亏损达上限，强制休息至 ${when}（期间不得下注与补录）`;

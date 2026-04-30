@@ -10,6 +10,7 @@ import { getBetRecords, getAbandonedRecords, getSettings, calcMonthStats, calcYe
 import { calcPnl, weekStart, weekEnd, matchDayKey, matchDayStart, parseKickoff, formatBetDirection } from "@/lib/types";
 import PnlBars from "@/components/pnl-bars";
 import WeeklyDigest from "@/components/weekly-digest";
+import DisciplineDisclaimer from "@/components/discipline-disclaimer";
 // Hero combines PnL and goal tracking; home orchestrates glass UI accented with sparkline + halo.
 import BottomNav from "@/components/bottom-nav";
 
@@ -292,6 +293,7 @@ export default function HomePage() {
 
   return (
     <div className="min-h-screen pb-28">
+      <DisciplineDisclaimer mode="daily" />
 
       {/* ── Lock Banner ─────────────────────────────────────────── */}
       {lockState?.locked && (

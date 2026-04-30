@@ -50,80 +50,112 @@ function SidedHandicapPicker({
   homeTeam: string;
   awayTeam: string;
 }) {
-  const hasHighSelected = data.values.some((v) => HANDICAP_HIGH.includes(v));
+  const allVals = [...data.homeValues, ...data.awayValues];
+  const hasHighSelected = allVals.some((v) => HANDICAP_HIGH.includes(v));
   const [showHigh, setShowHigh] = useState(hasHighSelected);
+  const [activeHome, setActiveHome] = useState(data.homeValues.length > 0);
+  const [activeAway, setActiveAway] = useState(data.awayValues.length > 0);
   useEffect(() => { if (hasHighSelected) setShowHigh(true); }, [hasHighSelected]);
+  useEffect(() => { if (data.homeValues.length > 0) setActiveHome(true); }, [data.homeValues.length]);
+  useEffect(() => { if (data.awayValues.length > 0) setActiveAway(true); }, [data.awayValues.length]);
 
-  const toggleValue = (v: HandicapValue) => {
-    const sel = data.values.includes(v);
-    onChange({ ...data, values: sel ? data.values.filter((x) => x !== v) : [...data.values, v] });
+  const toggleSideActive = (side: "home" | "away") => {
+    if (side === "home") {
+      const next = !activeHome;
+      setActiveHome(next);
+      if (!next) onChange({ ...data, homeValues: [] });
+    } else {
+      const next = !activeAway;
+      setActiveAway(next);
+      if (!next) onChange({ ...data, awayValues: [] });
+    }
+  };
+  const toggleValue = (side: "home" | "away", v: HandicapValue) => {
+    const key = side === "home" ? "homeValues" : "awayValues";
+    const list = data[key];
+    const sel = list.includes(v);
+    onChange({ ...data, [key]: sel ? list.filter((x) => x !== v) : [...list, v] });
   };
 
   const preview = formatSidedHandicap(data, homeTeam, awayTeam);
-  const hasSide = data.sides.length > 0;
-  const hasValues = data.values.length > 0;
-
-  const toggleSide = (s: "home" | "away") => {
-    const sel = data.sides.includes(s);
-    onChange({
-      ...data,
-      sides: sel ? data.sides.filter((x) => x !== s) : [...data.sides, s],
-    });
+  const renderRow = (side: "home" | "away", active: boolean) => {
+    const team = side === "home" ? (homeTeam || "主队") : (awayTeam || "客队");
+    const label = side === "home" ? "主让" : "客让";
+    const values = side === "home" ? data.homeValues : data.awayValues;
+    return (
+      <div className="space-y-1.5">
+        <button
+          onClick={() => toggleSideActive(side)}
+          className={`w-full py-1.5 px-2 rounded text-[11px] font-semibold flex items-center justify-between gap-2 ${
+            active ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
+          }`}
+        >
+          <span className="flex items-center gap-1.5">
+            <span className={`w-3 h-3 rounded-sm border flex items-center justify-center text-[9px] leading-none ${
+              active ? "bg-background border-background text-foreground" : "border-current"
+            }`}>{active ? "✓" : ""}</span>
+            <span className="opacity-70 text-[10px]">{label}</span>
+            <span className="truncate">{team}</span>
+          </span>
+          {active && values.length > 0 && (
+            <span className="text-[10px] opacity-70 font-mono">{values.length} 项</span>
+          )}
+        </button>
+        {active && (
+          <>
+            <div className="flex flex-wrap gap-1.5">
+              {HANDICAP_LOW.map((v) => {
+                const sel = values.includes(v);
+                return (
+                  <button key={v} onClick={() => toggleValue(side, v)}
+                    className={`px-2.5 py-1 rounded text-[11px] font-mono ${
+                      sel ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
+                    }`}
+                  >{v}</button>
+                );
+              })}
+            </div>
+            {showHigh && (
+              <div className="flex flex-wrap gap-1.5">
+                {HANDICAP_HIGH.map((v) => {
+                  const sel = values.includes(v);
+                  return (
+                    <button key={v} onClick={() => toggleValue(side, v)}
+                      className={`px-2.5 py-1 rounded text-[11px] font-mono ${
+                        sel ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
+                      }`}
+                    >{v}</button>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
   };
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-1.5 mb-1.5">
-        {(["home", "away"] as const).map((s) => (
-          <button key={s}
-            onClick={() => toggleSide(s)}
-            className={`py-1.5 px-2 rounded text-[11px] font-semibold min-w-0 flex flex-col items-center leading-tight ${
-              data.sides.includes(s) ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
-            }`}
-          >
-            <span className="opacity-70 text-[10px]">{s === "home" ? "主让" : "客让"}</span>
-            <span className="truncate max-w-full">{s === "home" ? (homeTeam || "主队") : (awayTeam || "客队")}</span>
+      <div className="space-y-2">
+        {renderRow("home", activeHome)}
+        {renderRow("away", activeAway)}
+      </div>
+      {(activeHome || activeAway) && (
+        <div className="flex justify-end mt-1.5">
+          <button onClick={() => setShowHigh((v) => !v)}
+            className="px-2 py-0.5 rounded text-[10px] bg-muted/60 text-muted-foreground flex items-center gap-1">
+            <span className={`transition-transform ${showHigh ? "rotate-180" : ""}`}>▾</span>
+            {showHigh ? "收起高让球" : "展开高让球"}
           </button>
-        ))}
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {HANDICAP_LOW.map((v) => {
-          const sel = data.values.includes(v);
-          return (
-            <button key={v} onClick={() => toggleValue(v)}
-              className={`px-2.5 py-1 rounded text-[11px] font-mono ${
-                sel ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
-              }`}
-            >{v}</button>
-          );
-        })}
-        <button onClick={() => setShowHigh((v) => !v)}
-          className="px-2.5 py-1 rounded text-[10px] bg-muted text-muted-foreground flex items-center gap-1">
-          <span className={`transition-transform ${showHigh ? "rotate-180" : ""}`}>▾</span>高
-        </button>
-      </div>
-      {showHigh && (
-        <div className="flex flex-wrap gap-1.5 mt-1.5">
-          {HANDICAP_HIGH.map((v) => {
-            const sel = data.values.includes(v);
-            return (
-              <button key={v} onClick={() => toggleValue(v)}
-                className={`px-2.5 py-1 rounded text-[11px] font-mono ${
-                  sel ? "bg-foreground text-background" : "bg-muted text-muted-foreground"
-                }`}
-              >{v}</button>
-            );
-          })}
         </div>
       )}
       {preview ? (
         <div className="mt-2 rounded bg-foreground/5 border border-foreground/10 px-2.5 py-1.5">
           <p className="text-[11px] font-mono text-foreground/90">{preview}</p>
         </div>
-      ) : (hasSide || hasValues) ? (
-        <p className="mt-2 text-[10px] text-muted-foreground/60">
-          {hasSide ? "· 还需选择让球数值" : "· 还需选择让球方"}
-        </p>
+      ) : (activeHome || activeAway) ? (
+        <p className="mt-2 text-[10px] text-muted-foreground/60">· 还需选择让球数值</p>
       ) : null}
     </>
   );
@@ -612,8 +644,8 @@ function ScreeningRow({
             <>
               <span className="text-warning/80">信心{conf === 0 ? "—" : conf}</span>
               {trap && <><span>·</span><span className="text-loss/80">疑陷阱</span></>}
-              {item.deduction?.fairRanges && item.deduction.fairRanges.values.length > 0 && (
-                <><span>·</span><span className="truncate">合理 {item.deduction.fairRanges.values.join("/")}</span></>
+              {item.deduction?.fairRanges && (item.deduction.fairRanges.homeValues.length + item.deduction.fairRanges.awayValues.length) > 0 && (
+                <><span>·</span><span className="truncate">合理 {[...item.deduction.fairRanges.homeValues, ...item.deduction.fairRanges.awayValues].join("/")}</span></>
               )}
             </>
           ) : (

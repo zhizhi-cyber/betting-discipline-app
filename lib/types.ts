@@ -137,10 +137,12 @@ export type HandicapValue =
 export type HandicapConfidence = 1 | 2 | 3 | 4 | 5 | 0;
 
 export interface SidedHandicap {
-  // 让球方支持多选：例如盘口推演时合理区间可同时是"主让 0.5"和"客让 0.25"。
-  // 旧数据存的是单 `side`；读取时由 storage 层迁移为 `sides`（见 normalizeSided）。
-  sides: ("home" | "away")[];
-  values: HandicapValue[];
+  // 主队/客队各自独立的让球数值集合 —— 例如合理区间可同时表达
+  // "主队让 0.5/0.75" 和 "客队让 0.25"，两边的数值可不一样。
+  // 旧数据可能是 `{side, values}` 或 `{sides[], values[]}`；读取时由 storage
+  // 层用 normalizeSided 迁移到 `{homeValues, awayValues}`。
+  homeValues: HandicapValue[];
+  awayValues: HandicapValue[];
 }
 
 export interface HandicapDeduction {
@@ -444,41 +446,58 @@ export function formatSidedHandicap(
   homeTeam: string,
   awayTeam: string,
 ): string {
-  if (sided.sides.length === 0 || sided.values.length === 0) return "";
-  // 让球方（给出让球的那一方 / 强队视角）。多选时以 " · " 分组：
-  //   "主队 -0.5 / -0.75 · 客队 -0.25"
-  const valueParts = sided.values.map((v) => {
+  const fmt = (vals: HandicapValue[]) => vals.map((v) => {
     const n = parseFloat(v);
-    if (isNaN(n) || n === 0) return "0";
-    return `-${v}`;
-  });
-  const groups = sided.sides.map((s) => {
-    const team = s === "home" ? (homeTeam || "主队") : (awayTeam || "客队");
-    return `${team} ${valueParts.join(" / ")}`;
-  });
+    return isNaN(n) || n === 0 ? "0" : `-${v}`;
+  }).join(" / ");
+  const groups: string[] = [];
+  if (sided.homeValues.length > 0) {
+    groups.push(`${homeTeam || "主队"} ${fmt(sided.homeValues)}`);
+  }
+  if (sided.awayValues.length > 0) {
+    groups.push(`${awayTeam || "客队"} ${fmt(sided.awayValues)}`);
+  }
   return groups.join(" · ");
 }
 
-// Whether at least one side and one value are selected.
+// 至少一侧填了 values。
 export function isSidedHandicapComplete(sided: SidedHandicap): boolean {
-  return sided.sides.length > 0 && sided.values.length > 0;
+  return sided.homeValues.length > 0 || sided.awayValues.length > 0;
 }
 
-// 读取旧记录时把 `{side, values}` 归一化成 `{sides, values}`。
+// 读取旧记录归一化到 `{homeValues, awayValues}`：
+//  - 新结构 {homeValues, awayValues} → 直接保留
+//  - 中间结构 {sides[], values[]} → sides 含 home 时 homeValues=values，含 away 时 awayValues=values
+//  - 老结构 {side, values} → side 对应那侧 = values；另一侧 = []
 export function normalizeSided(raw: unknown): SidedHandicap {
-  if (!raw || typeof raw !== "object") return { sides: [], values: [] };
-  const r = raw as { side?: unknown; sides?: unknown; values?: unknown };
+  const empty: SidedHandicap = { homeValues: [], awayValues: [] };
+  if (!raw || typeof raw !== "object") return empty;
+  const r = raw as {
+    side?: unknown; sides?: unknown; values?: unknown;
+    homeValues?: unknown; awayValues?: unknown;
+  };
+  // 新结构：直接保留
+  if (Array.isArray(r.homeValues) || Array.isArray(r.awayValues)) {
+    return {
+      homeValues: Array.isArray(r.homeValues) ? (r.homeValues as HandicapValue[]) : [],
+      awayValues: Array.isArray(r.awayValues) ? (r.awayValues as HandicapValue[]) : [],
+    };
+  }
   const values = Array.isArray(r.values) ? (r.values as HandicapValue[]) : [];
+  // 中间结构 {sides[], values[]}
   if (Array.isArray(r.sides)) {
     const sides = (r.sides as unknown[]).filter(
       (s): s is "home" | "away" => s === "home" || s === "away",
     );
-    return { sides, values };
+    return {
+      homeValues: sides.includes("home") ? [...values] : [],
+      awayValues: sides.includes("away") ? [...values] : [],
+    };
   }
-  if (r.side === "home" || r.side === "away") {
-    return { sides: [r.side], values };
-  }
-  return { sides: [], values };
+  // 老结构 {side, values}
+  if (r.side === "home") return { homeValues: [...values], awayValues: [] };
+  if (r.side === "away") return { homeValues: [], awayValues: [...values] };
+  return empty;
 }
 
 // ─── Review option constants (post-match feedback) ────────────────────────────
@@ -664,10 +683,11 @@ export function emptyScoreData(): ScoreData {
 }
 
 export function emptyDeduction(): HandicapDeduction {
+  const empty = (): SidedHandicap => ({ homeValues: [], awayValues: [] });
   return {
-    fairRanges: { sides: [], values: [] },
-    homeWinBookieExpected: { sides: [], values: [] },
-    awayWinBookieExpected: { sides: [], values: [] },
+    fairRanges: empty(),
+    homeWinBookieExpected: empty(),
+    awayWinBookieExpected: empty(),
     confidence: 0,
     suspectedTrap: false,
     personalAnalysis: "",

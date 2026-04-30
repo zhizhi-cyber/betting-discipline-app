@@ -106,10 +106,12 @@ export default function AbandonedDetail({ id: propId }: { id?: string }) {
     bettingDirection: record.bettingDirection, odds: parseFloat(promoteOdds) || 0.97,
   });
 
+  const sidedFilled = (s: { homeValues: unknown[]; awayValues: unknown[] }) =>
+    s.homeValues.length > 0 || s.awayValues.length > 0;
   const hasDeduction = record.deduction &&
-    (record.deduction.fairRanges.values.length > 0 ||
-     record.deduction.homeWinBookieExpected.values.length > 0 ||
-     record.deduction.awayWinBookieExpected.values.length > 0 ||
+    (sidedFilled(record.deduction.fairRanges) ||
+     sidedFilled(record.deduction.homeWinBookieExpected) ||
+     sidedFilled(record.deduction.awayWinBookieExpected) ||
      record.deduction.personalAnalysis ||
      record.deduction.confidence > 0);
 
